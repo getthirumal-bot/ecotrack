@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="row">
+    <div>
+      <h2>Edit Defect #{{ defect.display_number or defect.id[:8] }}</h2>
+      <div class="muted">Update location, description, severity, status, and assignment.</div>
+    </div>
+    <div class="spacer"></div>
+    <a class="btn ghost" href="/defects?project_id={{ project_id }}{% if wbs_filter %}&wbs_filter={{ wbs_filter }}{% endif %}{% if severity_filter %}&severity_filter={{ severity_filter }}{% endif %}{% if status_filter %}&status_filter={{ status_filter }}{% endif %}{% if assigned_filter %}&assigned_filter={{ assigned_filter }}{% endif %}">← Back to Defects</a>
+  </div>
+
+  {% if request.query_params.get("error") %}
+    <div class="alert" style="margin-top:10px;">{{ request.query_params.get("error") }}</div>
+  {% endif %}
+
+  <div class="card" style="margin-top:12px;">
+    <form method="post" action="/defects/{{ defect.id }}/update">
+      <input type="hidden" name="project_id" value="{{ project_id }}" />
+      <input type="hidden" name="wbs_filter" value="{{ wbs_filter or '' }}" />
+      <input type="hidden" name="severity_filter" value="{{ severity_filter or '' }}" />
+      <input type="hidden" name="status_filter" value="{{ status_filter or '' }}" />
+      <input type="hidden" name="assigned_filter" value="{{ assigned_filter or '' }}" />
+      <div class="grid cols-3">
+        <div>
+          <label>Location</label>
+          <input name="location" value="{{ defect.location }}" required />
+        </div>
+        <div>
+          <label>Link to WBS / Task</label>
+          <select name="wbs_item_id">
+            <option value="">(none)</option>
+            {% for opt in wbs_dropdown_options %}
+              <option value="{{ opt.id }}" {% if defect.wbs_item_id == opt.id %}selected{% endif %}>{{ opt.display }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Severity</label>
+          <select name="severity">
+            <option value="low" {% if defect.severity.value == "low" %}selected{% endif %}>low</option>
+            <option value="medium" {% if defect.severity.value == "medium" %}selected{% endif %}>medium</option>
+            <option value="high" {% if defect.severity.value == "high" %}selected{% endif %}>high</option>
+            <option value="critical" {% if defect.severity.value == "critical" %}selected{% endif %}>critical</option>
+          </select>
+        </div>
+      </div>
+      <label>Description</label>
+      <textarea name="description" required>{{ defect.description }}</textarea>
+      <div class="grid cols-3">
+        <div>
+          <label>Status</label>
+          <select name="status">
+            <option value="open" {% if defect.status.value == "open" %}selected{% endif %}>open</option>
+            <option value="in_progress" {% if defect.status.value == "in_progress" %}selected{% endif %}>in_progress</option>
+            <option value="pending_approval" {% if defect.status.value == "pending_approval" %}selected{% endif %}>pending_approval</option>
+            <option value="resolved" {% if defect.status.value == "resolved" %}selected{% endif %}>resolved</option>
+            <option value="closed" {% if defect.status.value == "closed" %}selected{% endif %}>closed</option>
+            <option value="reopened" {% if defect.status.value == "reopened" %}selected{% endif %}>reopened</option>
+            <option value="cancelled" {% if defect.status.value == "cancelled" %}selected{% endif %}>cancelled</option>
+            <option value="approved" {% if defect.status.value == "approved" %}selected{% endif %}>approved</option>
+          </select>
+        </div>
+        <div>
+          <label>Reported By</label>
+          <input name="reported_by" value="{{ defect.reported_by or '' }}" />
+        </div>
+        <div>
+          <label>Assign To</label>
+          <select name="assigned_to_user_id">
+            <option value="">(unassigned)</option>
+            {% for u in users %}
+              <option value="{{ u.id }}" {% if defect.assigned_to_user_id == u.id %}selected{% endif %}>{{ u.name }} ({{ u.role }})</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <label>Reporter Contact</label>
+      <input name="reporter_contact" value="{{ defect.reporter_contact or '' }}" placeholder="Phone / WhatsApp" />
+      <button class="btn" type="submit">Save changes</button>
+    </form>
+  </div>
+{% endblock %}

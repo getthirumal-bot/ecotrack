@@ -1,0 +1,535 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="row">
+    <div>
+      <h2>{{ p.name }}</h2>
+      <div class="muted">{{ p.description }}</div>
+    </div>
+    <div class="spacer"></div>
+    <a class="btn ghost" href="/projects">Back</a>
+  </div>
+
+  <!-- Estimation vs Actual bar (project-specific) -->
+  <div class="card" style="margin-top:12px;">
+    <h3 style="margin:0 0 10px 0;">Estimation vs Actual (Cost)</h3>
+    {% set budget_val = p.budget or 0 %}
+    {% set est_val = costs.estimated_cost or 0 %}
+    {% set act_val = costs.actual_cost or 0 %}
+    {% set max_val = [budget_val, est_val, act_val, 1]|max %}
+    <div class="row" style="align-items:center; gap:16px; flex-wrap:wrap;">
+      <div class="est-act-bar-wrap" style="flex:1; min-width:200px; max-width:500px;">
+        <div class="est-act-bar-labels row" style="justify-content:space-between; font-size:.9rem; margin-bottom:6px;">
+          <span class="muted">Budget</span>
+          <span>{{ money(budget_val) }}</span>
+        </div>
+        <div class="progress" style="height:12px;"><div style="width: {{ (budget_val / max_val * 100) if max_val else 0 }}%; background: rgba(255,255,255,.2);"></div></div>
+        <div class="est-act-bar-labels row" style="justify-content:space-between; font-size:.9rem; margin-top:4px; margin-bottom:6px;">
+          <span class="muted">Estimated</span>
+          <span>{{ money(est_val) }}</span>
+        </div>
+        <div class="progress" style="height:12px;"><div style="width: {{ (est_val / max_val * 100) if max_val else 0 }}%; background: rgba(247,201,72,.5);"></div></div>
+        <div class="est-act-bar-labels row" style="justify-content:space-between; font-size:.9rem; margin-top:4px; margin-bottom:6px;">
+          <span class="muted">Actual</span>
+          <span><strong>{{ money(act_val) }}</strong></span>
+        </div>
+        <div class="progress" style="height:12px;"><div style="width: {{ (act_val / max_val * 100) if max_val else 0 }}%; background: linear-gradient(90deg, rgba(57,217,138,.8), rgba(57,217,138,.4));"></div></div>
+      </div>
+      <div class="grid cols-3" style="gap:10px;">
+        <div class="card" style="padding:10px;">
+          <div class="muted">Progress</div>
+          <div class="kpi">{{ progress }}%</div>
+          <div class="progress"><div style="width: {{ progress }}%"></div></div>
+        </div>
+        <div class="card" style="padding:10px;">
+          <div class="muted">Variance</div>
+          <div class="kpi">{{ money(costs.variance) }}</div>
+          <div class="hint">Est − Actual</div>
+        </div>
+        <div class="card" style="padding:10px;">
+          <div class="muted">Health</div>
+          <div class="kpi">
+            {% if costs.actual_cost and p.budget and costs.actual_cost > p.budget * 1.1 %}
+              <span class="badge red">Over budget</span>
+            {% elif progress >= 50 and costs.actual_cost <= (p.budget or 0) %}
+              <span class="badge green">On track</span>
+            {% else %}
+              <span class="badge yellow">Review</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Line graphs: activities planned vs complete, cost vs actual -->
+  <div class="card" style="margin-top:12px;">
+    <h3 style="margin:0 0 10px 0;">Charts</h3>
+    <div class="row" style="gap:24px; flex-wrap:wrap;">
+      <div style="min-width:280px; max-width:400px;">
+        <p class="muted" style="margin:0 0 8px 0;">Activities: Planned vs Complete</p>
+        <canvas id="chart-activities" width="320" height="180"></canvas>
+      </div>
+      <div style="min-width:280px; max-width:400px;">
+        <p class="muted" style="margin:0 0 8px 0;">Cost: Budget vs Estimated vs Actual</p>
+        <canvas id="chart-cost" width="320" height="180"></canvas>
+      </div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script>
+    (function(){
+      new Chart(document.getElementById('chart-activities'), {
+        type: 'bar',
+        data: {
+          labels: ['Planned', 'Complete'],
+          datasets: [{ label: 'Activities', data: [{{ chart_activities.planned or 0 }}, {{ chart_activities.complete or 0 }}], backgroundColor: ['rgba(255,255,255,0.2)', 'rgba(57,217,138,0.6)'] }]
+        },
+        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+      });
+      new Chart(document.getElementById('chart-cost'), {
+        type: 'bar',
+        data: {
+          labels: ['Budget', 'Estimated', 'Actual'],
+          datasets: [{ label: 'Cost', data: [{{ chart_cost.budget or 0 }}, {{ chart_cost.estimated or 0 }}, {{ chart_cost.actual or 0 }}], backgroundColor: ['rgba(255,255,255,0.2)', 'rgba(247,201,72,0.5)', 'rgba(57,217,138,0.5)'] }]
+        },
+        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+      });
+    })();
+  </script>
+
+  {% if role in ["architect","project_owner"] %}
+  <!-- PM: Project Control Center -->
+  <div class="card" style="margin-top:14px; background: linear-gradient(135deg, rgba(19,35,58,.8), rgba(30,50,80,.6)); border: 1px solid rgba(57,217,138,.2);">
+    <h3 style="margin:0 0 12px 0; color: rgba(57,217,138,.95);">🎯 Project Control Center</h3>
+    {% if request.query_params.get("error") %}
+      <p class="muted" style="color: rgba(255,92,92,.9); margin-bottom:8px;">{{ request.query_params.get("error") }}</p>
+    {% endif %}
+    {% if request.query_params.get("msg") %}
+      <p class="muted" style="color: rgba(57,217,138,.9); margin-bottom:8px;">{{ request.query_params.get("msg") }}</p>
+    {% endif %}
+    {% if request.query_params.get("sent_activity") %}
+      <p class="muted" style="color: rgba(57,217,138,.9); margin-bottom:8px;">✅ Reminders sent to {{ request.query_params.get("count", "0") }} assignee(s).</p>
+    {% endif %}
+
+    <!-- Quick Filters -->
+    <div style="margin-bottom:16px; padding:12px; background: rgba(19,35,58,.4); border-radius:8px;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+        <button type="button" class="btn ghost" onclick="setQuickFilter('today')" style="padding:6px 12px; font-size:.9rem;">Today</button>
+        <button type="button" class="btn ghost" onclick="setQuickFilter('tomorrow')" style="padding:6px 12px; font-size:.9rem;">Tomorrow</button>
+        <button type="button" class="btn ghost" onclick="setQuickFilter('this_week')" style="padding:6px 12px; font-size:.9rem;">This Week</button>
+        <button type="button" class="btn ghost" onclick="setQuickFilter('next_week')" style="padding:6px 12px; font-size:.9rem;">Next Week</button>
+        <button type="button" class="btn ghost" onclick="setQuickFilter('this_month')" style="padding:6px 12px; font-size:.9rem;">This Month</button>
+        <button type="button" class="btn ghost" onclick="setQuickFilter('overdue')" style="padding:6px 12px; font-size:.9rem; color: rgba(255,92,92,.9);">⚠️ Overdue</button>
+      </div>
+      
+      <!-- Filters -->
+      <div class="grid cols-4" style="gap:10px; margin-bottom:10px;">
+        <div>
+          <label style="font-size:.85rem; color: var(--muted);">From Date</label>
+          <input type="date" id="filter-from-date" style="width:100%;" />
+        </div>
+        <div>
+          <label style="font-size:.85rem; color: var(--muted);">To Date</label>
+          <input type="date" id="filter-to-date" style="width:100%;" />
+        </div>
+        <div>
+          <label style="font-size:.85rem; color: var(--muted);">Assigned To</label>
+          <select id="filter-assigned" style="width:100%;">
+            <option value="">All</option>
+            {% for u in users %}
+              <option value="{{ u.id }}">{{ u.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label style="font-size:.85rem; color: var(--muted);">Status</label>
+          <select id="filter-status" style="width:100%;">
+            <option value="">All</option>
+            <option value="pending">Pending</option>
+            <option value="in_progress">In Progress</option>
+            <option value="completed">Completed</option>
+            <option value="pending_approval">Pending Approval</option>
+            <option value="rejected">Rejected</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" id="filter-overdue" />
+          <span style="font-size:.9rem;">Show only overdue tasks</span>
+        </label>
+        <div class="spacer"></div>
+        <button type="button" class="btn" onclick="loadFilteredActivities()" style="padding:8px 16px;">🔍 Load Activities</button>
+      </div>
+    </div>
+
+    <!-- Activities Tree -->
+    <div id="activities-tree-container" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <div>
+          <span id="activities-count" class="badge" style="font-size:.9rem;">0 activities</span>
+        </div>
+        <div>
+          <button type="button" class="btn ghost" onclick="selectAllActivities()" style="padding:4px 10px; font-size:.85rem;">Select all</button>
+          <button type="button" class="btn ghost" onclick="deselectAllActivities()" style="padding:4px 10px; font-size:.85rem;">Deselect all</button>
+        </div>
+      </div>
+      <form method="post" action="/projects/{{ p.id }}/send-activity-reminders" id="activity-reminders-form">
+        <input type="hidden" name="activity_date" id="activity-date-hidden" />
+        <div id="activities-tree" style="max-height:400px; overflow-y:auto; border:1px solid var(--border); padding:12px; border-radius:8px; background: rgba(19,35,58,.3);"></div>
+        <button type="submit" class="btn" style="margin-top:12px; background: linear-gradient(135deg, rgba(57,217,138,.8), rgba(57,217,138,.6));">📧 Send reminders for selected activities</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Completion Tracking (Cricket-style) -->
+  <div class="card" style="margin-top:14px;">
+    <h3 style="margin:0 0 12px 0;">📊 Completion Tracking (Expected vs Actual)</h3>
+    <p class="muted" style="margin:0 0 12px 0;">Track project progress like a cricket scorecard — expected completion rate vs actual completion over time</p>
+    <div id="completion-chart-container" style="position:relative; height:300px;">
+      <canvas id="completion-chart"></canvas>
+    </div>
+    <div id="run-rate-display" style="margin-top:16px; display:grid; grid-template-columns:repeat(3,1fr); gap:12px;">
+      <div class="card" style="background: rgba(19,35,58,.4); padding:12px; text-align:center;">
+        <div class="muted" style="font-size:.85rem;">Actual Run Rate</div>
+        <div id="actual-rate" style="font-size:1.8rem; font-weight:700; color: rgba(57,217,138,.9);">—</div>
+        <div class="muted" style="font-size:.8rem;">tasks/day</div>
+      </div>
+      <div class="card" style="background: rgba(19,35,58,.4); padding:12px; text-align:center;">
+        <div class="muted" style="font-size:.85rem;">Expected Run Rate</div>
+        <div id="expected-rate" style="font-size:1.8rem; font-weight:700; color: rgba(247,201,72,.9);">—</div>
+        <div class="muted" style="font-size:.8rem;">tasks/day</div>
+      </div>
+      <div class="card" style="background: rgba(19,35,58,.4); padding:12px; text-align:center;">
+        <div class="muted" style="font-size:.85rem;">Required Run Rate</div>
+        <div id="required-rate" style="font-size:1.8rem; font-weight:700; color: rgba(255,140,0,.9);">—</div>
+        <div class="muted" style="font-size:.8rem;">tasks/day</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Quick filter functions
+    function setQuickFilter(type) {
+      const today = new Date();
+      const fromInput = document.getElementById('filter-from-date');
+      const toInput = document.getElementById('filter-to-date');
+      const overdueCheck = document.getElementById('filter-overdue');
+      
+      switch(type) {
+        case 'today':
+          fromInput.value = toInput.value = today.toISOString().split('T')[0];
+          overdueCheck.checked = false;
+          break;
+        case 'tomorrow':
+          const tomorrow = new Date(today);
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          fromInput.value = toInput.value = tomorrow.toISOString().split('T')[0];
+          overdueCheck.checked = false;
+          break;
+        case 'this_week':
+          const weekStart = new Date(today);
+          weekStart.setDate(today.getDate() - today.getDay());
+          const weekEnd = new Date(weekStart);
+          weekEnd.setDate(weekStart.getDate() + 6);
+          fromInput.value = weekStart.toISOString().split('T')[0];
+          toInput.value = weekEnd.toISOString().split('T')[0];
+          overdueCheck.checked = false;
+          break;
+        case 'next_week':
+          const nextWeekStart = new Date(today);
+          nextWeekStart.setDate(today.getDate() - today.getDay() + 7);
+          const nextWeekEnd = new Date(nextWeekStart);
+          nextWeekEnd.setDate(nextWeekStart.getDate() + 6);
+          fromInput.value = nextWeekStart.toISOString().split('T')[0];
+          toInput.value = nextWeekEnd.toISOString().split('T')[0];
+          overdueCheck.checked = false;
+          break;
+        case 'this_month':
+          const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+          const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+          fromInput.value = monthStart.toISOString().split('T')[0];
+          toInput.value = monthEnd.toISOString().split('T')[0];
+          overdueCheck.checked = false;
+          break;
+        case 'overdue':
+          fromInput.value = '';
+          toInput.value = '';
+          overdueCheck.checked = true;
+          break;
+      }
+    }
+
+    function loadFilteredActivities() {
+      const fromDate = document.getElementById('filter-from-date').value;
+      const toDate = document.getElementById('filter-to-date').value;
+      const assigned = document.getElementById('filter-assigned').value;
+      const status = document.getElementById('filter-status').value;
+      const overdue = document.getElementById('filter-overdue').checked;
+      
+      if (!fromDate && !toDate && !overdue) {
+        alert('Please select a date range or enable overdue filter');
+        return;
+      }
+      
+      const params = new URLSearchParams();
+      if (fromDate) params.append('from_date', fromDate);
+      if (toDate) params.append('to_date', toDate);
+      if (assigned) params.append('assigned_to', assigned);
+      if (status) params.append('status_filter', status);
+      if (overdue) params.append('show_overdue', 'true');
+      
+      // Set activity_date for form submission (use from_date or to_date or today)
+      document.getElementById('activity-date-hidden').value = fromDate || toDate || new Date().toISOString().split('T')[0];
+      
+      fetch(`/projects/{{ p.id }}/activities-filtered?${params}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.error) {
+            alert(data.error);
+            return;
+          }
+          renderActivitiesTree(data.items);
+          document.getElementById('activities-count').textContent = `${data.count || 0} activities`;
+          document.getElementById('activities-tree-container').style.display = 'block';
+        })
+        .catch(e => {
+          console.error(e);
+          alert('Failed to load activities');
+        });
+    }
+
+    function renderActivitiesTree(items) {
+      const container = document.getElementById('activities-tree');
+      container.innerHTML = '';
+      if (!items || items.length === 0) {
+        container.innerHTML = '<p class="muted">No activities found for the selected filters.</p>';
+        return;
+      }
+      
+      function renderNode(node, depth = 0) {
+        const div = document.createElement('div');
+        div.style.marginLeft = (depth * 20) + 'px';
+        div.style.marginBottom = '6px';
+        div.style.padding = '4px';
+        div.style.borderRadius = '4px';
+        if (node.is_overdue) {
+          div.style.background = 'rgba(255,92,92,.15)';
+          div.style.borderLeft = '3px solid rgba(255,92,92,.6)';
+        }
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.name = 'selected_wbs_ids';
+        checkbox.value = node.id;
+        checkbox.checked = true;
+        checkbox.id = 'wbs-' + node.id;
+        checkbox.className = 'activity-checkbox';
+        
+        const label = document.createElement('label');
+        label.htmlFor = 'wbs-' + node.id;
+        label.style.cursor = 'pointer';
+        label.style.marginLeft = '8px';
+        label.style.display = 'inline-block';
+        
+        let labelText = node.name;
+        if (node.status) labelText += ` <span class="badge">${node.status}</span>`;
+        if (node.is_overdue) labelText += ' <span class="badge" style="background:rgba(255,92,92,.6);">OVERDUE</span>';
+        if (node.primary_owner) labelText += ` <span class="muted" style="font-size:.85rem;">— ${node.primary_owner}</span>`;
+        if (node.end_date) labelText += ` <span class="muted" style="font-size:.8rem;">(${node.end_date})</span>`;
+        
+        label.innerHTML = labelText;
+        div.appendChild(checkbox);
+        div.appendChild(label);
+        container.appendChild(div);
+        
+        if (node.children && node.children.length > 0) {
+          node.children.forEach(child => renderNode(child, depth + 1));
+        }
+      }
+      items.forEach(item => renderNode(item));
+    }
+
+    function selectAllActivities() {
+      document.querySelectorAll('.activity-checkbox').forEach(cb => cb.checked = true);
+    }
+    function deselectAllActivities() {
+      document.querySelectorAll('.activity-checkbox').forEach(cb => cb.checked = false);
+    }
+
+    // Load completion tracking on page load (wait for Chart.js)
+    function loadCompletionTracking() {
+      if (typeof Chart === 'undefined') {
+        setTimeout(loadCompletionTracking, 100);
+        return;
+      }
+      fetch(`/projects/{{ p.id }}/completion-tracking`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.error) {
+            document.getElementById('completion-chart-container').innerHTML = '<p class="muted">' + data.error + '</p>';
+            return;
+          }
+          
+          // Update run rates
+          document.getElementById('actual-rate').textContent = data.run_rate.actual.toFixed(2);
+          document.getElementById('expected-rate').textContent = data.run_rate.expected.toFixed(2);
+          document.getElementById('required-rate').textContent = data.run_rate.required.toFixed(2);
+          
+          // Draw chart
+          const ctx = document.getElementById('completion-chart').getContext('2d');
+          new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: data.data_points.map(d => d.date),
+            datasets: [{
+              label: 'Expected Completion %',
+              data: data.data_points.map(d => d.expected_pct),
+              borderColor: 'rgba(247,201,72,.8)',
+              backgroundColor: 'rgba(247,201,72,.1)',
+              tension: 0.4,
+              fill: true,
+            }, {
+              label: 'Actual Completion %',
+              data: data.data_points.map(d => d.actual_pct),
+              borderColor: 'rgba(57,217,138,.8)',
+              backgroundColor: 'rgba(57,217,138,.1)',
+              tension: 0.4,
+              fill: true,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: true, position: 'top' },
+              tooltip: { mode: 'index', intersect: false }
+            },
+            scales: {
+              y: { beginAtZero: true, max: 100, ticks: { suffix: '%' } },
+              x: { ticks: { maxRotation: 45, minRotation: 45 } }
+            }
+          }
+        });
+        })
+        .catch(e => {
+          console.error(e);
+          document.getElementById('completion-chart-container').innerHTML = '<p class="muted">Failed to load completion data.</p>';
+        });
+    }
+    loadCompletionTracking();
+  </script>
+  {% endif %}
+
+  <!-- Quick executive paragraph (auto-generated) -->
+  <div class="card" style="margin-top:12px; background: rgba(19,35,58,.5);">
+    <h3 style="margin:0 0 8px 0;">Executive summary (auto)</h3>
+    <p class="exec-summary-auto" style="margin:0; line-height:1.5;">{{ exec_summary_auto }}</p>
+  </div>
+
+  <!-- Cost by category -->
+  <div class="card" style="margin-top:12px;">
+    <h3 style="margin:0 0 10px 0;">Cost by category (WBS)</h3>
+    <p class="muted" style="margin:0 0 10px 0;">Which category is taking more cost.</p>
+    {% if cost_by_wbs %}
+      <table class="table">
+        <thead>
+          <tr><th>Category / WBS</th><th>Estimated</th><th>Actual</th><th>Variance</th></tr>
+        </thead>
+        <tbody>
+          {% for row in cost_by_wbs %}
+            <tr>
+              <td><strong>{{ row.wbs_name }}</strong></td>
+              <td>{{ money(row.estimated_cost) }}</td>
+              <td>{{ money(row.actual_cost) }}</td>
+              <td>{{ money(row.variance) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="muted">No BOQ data by WBS yet.</div>
+    {% endif %}
+  </div>
+
+  <!-- Defects by task / bottlenecks -->
+  <div class="card" style="margin-top:12px;">
+    <div class="row" style="align-items:center;">
+      <h3 style="margin:0;">Defects by task / bottlenecks</h3>
+      <div class="spacer"></div>
+      <button type="button" class="btn ghost" onclick="document.querySelectorAll('.defects-by-wbs-row').forEach(function(d){ d.open=true })">Expand all</button>
+      <button type="button" class="btn ghost" onclick="document.querySelectorAll('.defects-by-wbs-row').forEach(function(d){ d.open=false })">Collapse all</button>
+    </div>
+    <p class="muted" style="margin:8px 0 10px 0;">Tasks or areas attracting more defects. Expand a row to see which defects to resolve.</p>
+    {% if defects_by_wbs %}
+      <div class="defects-by-wbs-list" style="margin-top:10px;">
+        {% for row in defects_by_wbs %}
+          <details class="defects-by-wbs-row" style="margin-bottom:8px; border-left: 3px solid var(--border); padding-left: 10px;">
+            <summary style="cursor:pointer; list-style:none; display:flex; align-items:center; gap:10px;">
+              <strong>{{ row.wbs_name }}</strong>
+              <span class="badge">{{ row.defect_count }} defect{{ 's' if row.defect_count != 1 else '' }}</span>
+            </summary>
+            <div class="defects-by-wbs-detail" style="margin-top:10px; padding-left: 20px;">
+              <p class="muted" style="margin:0 0 6px 0;">Defects to resolve:</p>
+              <ul style="margin:0; padding-left: 20px;">
+                {% for d in row.defects %}
+                  <li style="margin-bottom:6px;">
+                    <strong>{{ d.location }}</strong> — {{ d.description[:80] }}{% if d.description|length > 80 %}…{% endif %}
+                    <span class="badge">{{ d.status.value if d.status else d.status }}</span>
+                    <span class="badge severity-{{ d.severity.value if d.severity else 'medium' }}">{{ (d.severity.value if d.severity else 'medium')|upper }}</span>
+                    <a href="/defects?project_id={{ p.id }}#defect-{{ d.id }}" class="btn ghost" style="padding:4px 8px; margin-left:8px;">Open in Defects</a>
+                  </li>
+                {% endfor %}
+              </ul>
+            </div>
+          </details>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="muted" style="margin-top:10px;">No defects linked to WBS yet.</div>
+    {% endif %}
+  </div>
+
+  <!-- Editable Executive Summary -->
+  <div class="card" style="margin-top:12px;">
+    <div class="row">
+      <h3 style="margin:0;">Executive Summary (editable)</h3>
+      <div class="spacer"></div>
+      <div class="hint">Editable by Architect / Project Owner</div>
+    </div>
+
+    {% if role in ["architect","project_owner"] %}
+      <form method="post" action="/projects/{{ p.id }}/summary" style="margin-top:10px;">
+        <label>What We Completed</label>
+        <textarea name="summary_what_completed">{{ p.summary_what_completed }}</textarea>
+        <label>Where We Stand</label>
+        <textarea name="summary_where_we_stand">{{ p.summary_where_we_stand }}</textarea>
+        <label>Pain Points / Risks</label>
+        <textarea name="summary_pain_points">{{ p.summary_pain_points }}</textarea>
+        <label>Where We're Heading</label>
+        <textarea name="summary_where_heading">{{ p.summary_where_heading }}</textarea>
+        <button class="btn" type="submit">Save Summary</button>
+      </form>
+    {% else %}
+      <div class="grid cols-2" style="margin-top:10px;">
+        <div class="card" style="background: rgba(19,35,58,.35); box-shadow:none;">
+          <div class="muted"><strong>What We Completed</strong></div>
+          <div style="margin-top:6px;">{{ p.summary_what_completed or "-" }}</div>
+        </div>
+        <div class="card" style="background: rgba(19,35,58,.35); box-shadow:none;">
+          <div class="muted"><strong>Where We Stand</strong></div>
+          <div style="margin-top:6px;">{{ p.summary_where_we_stand or "-" }}</div>
+        </div>
+        <div class="card" style="background: rgba(19,35,58,.35); box-shadow:none;">
+          <div class="muted"><strong>Pain Points / Risks</strong></div>
+          <div style="margin-top:6px;">{{ p.summary_pain_points or "-" }}</div>
+        </div>
+        <div class="card" style="background: rgba(19,35,58,.35); box-shadow:none;">
+          <div class="muted"><strong>Where We're Heading</strong></div>
+          <div style="margin-top:6px;">{{ p.summary_where_heading or "-" }}</div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}

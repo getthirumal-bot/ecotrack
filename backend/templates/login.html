@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block content_anon %}
+<div class="auth-wrap">
+  <div class="card auth">
+    <h1>Ecotrack</h1>
+    <p class="muted">Sign in to manage projects, WBS, BOQ/BOM, approvals, and defects.</p>
+    {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+    <form method="post" action="/login" class="form">
+      <label>Email</label>
+      <input name="email" type="email" required />
+      <label>Password</label>
+      <input name="password" type="password" required />
+      <button class="btn" type="submit">Sign in</button>
+    </form>
+    {% if demo %}
+    <div class="demo">
+      <div class="muted"><strong>Demo credentials</strong> (password: <code>password</code>)</div>
+      <ul>
+        <li><code>architect@nrpt.com</code></li>
+        <li><code>owner@nrpt.com</code></li>
+        <li><code>supervisor@nrpt.com</code></li>
+        <li><code>field@nrpt.com</code></li>
+      </ul>
+      <div class="muted">If this is the first run, visit <code>/seed</code> once to load demo data.</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="row">
+    <div>
+      <h2>Edit user</h2>
+      <div class="muted">{{ edit_user.name }} ({{ edit_user.email }})</div>
+    </div>
+    <div class="spacer"></div>
+    <a class="btn ghost" href="/users">Back to users</a>
+  </div>
+
+  {% if request.query_params.get("error") %}
+    <div class="card" style="margin-top:12px; border-color: rgba(255,92,92,.5);">
+      <span class="muted">{{ request.query_params.get("error") }}</span>
+    </div>
+  {% endif %}
+
+  <div class="card" style="margin-top:14px;">
+    <form method="post" action="/users/{{ edit_user.id }}/edit" class="form-grid">
+      <label>Name <input type="text" name="name" value="{{ edit_user.name }}" required /></label>
+      <label>Email <input type="email" name="email" value="{{ edit_user.email }}" required /></label>
+      <label>Role
+        <select name="role">
+          {% for r in roles %}
+            <option value="{{ r.value }}" {% if r == edit_user.role %}selected{% endif %}>{{ r.value }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Phone <input type="text" name="phone" value="{{ edit_user.phone or '' }}" /></label>
+      <label>WhatsApp <input type="text" name="whatsapp_phone" value="{{ edit_user.whatsapp_phone or '' }}" /></label>
+      <label class="span-2">Address <input type="text" name="address" value="{{ edit_user.address or '' }}" style="width:100%;" /></label>
+      <label class="span-2">Change password (leave blank to keep)
+        <input type="password" name="change_password" placeholder="New password" />
+      </label>
+      <label class="span-2">Projects (multi-select)
+        <select name="project_ids" multiple style="min-height:80px;">
+          {% for pr in projects %}
+            <option value="{{ pr.id }}" {% if pr.id in user_projects %}selected{% endif %}>{{ pr.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="span-2">Locations (one per line)
+        <textarea name="locations" rows="3">{{ user_locations|join("\n") }}</textarea>
+      </label>
+      <div class="span-2">
+        <button type="submit" class="btn">Save</button>
+      </div>
+    </form>
+  </div>
+{% endblock %}

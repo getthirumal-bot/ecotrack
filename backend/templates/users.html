@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="row">
+    <div>
+      <h2>User management</h2>
+      <div class="muted">Create and edit users; associate with projects and locations; manage role permissions (CRUD).</div>
+    </div>
+    <div class="spacer"></div>
+  </div>
+
+  {% if request.query_params.get("error") %}
+    <div class="card" style="margin-top:12px; border-color: rgba(255,92,92,.5);">
+      <span class="muted">{{ request.query_params.get("error") }}</span>
+    </div>
+  {% endif %}
+  {% if request.query_params.get("created") %}
+    <div class="card" style="margin-top:12px; border-color: rgba(57,217,138,.5);">User created.</div>
+  {% endif %}
+  {% if request.query_params.get("updated") %}
+    <div class="card" style="margin-top:12px; border-color: rgba(57,217,138,.5);">User updated.</div>
+  {% endif %}
+  {% if request.query_params.get("perms_saved") %}
+    <div class="card" style="margin-top:12px; border-color: rgba(57,217,138,.5);">Role permissions saved.</div>
+  {% endif %}
+
+  <!-- Create user -->
+  <div class="card" style="margin-top:14px;">
+    <h3 style="margin:0 0 10px 0;">Create user</h3>
+    <form method="post" action="/users/create" class="form-grid">
+      <label>Name <input type="text" name="name" required placeholder="Full name" /></label>
+      <label>Email <input type="email" name="email" required placeholder="user@example.com" /></label>
+      <label>Password <input type="password" name="password" placeholder="Leave blank for default" /></label>
+      <label>Role
+        <select name="role">
+          {% for r in roles %}
+            <option value="{{ r.value }}">{{ r.value }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Phone <input type="text" name="phone" placeholder="Phone number" /></label>
+      <label>WhatsApp <input type="text" name="whatsapp_phone" placeholder="WhatsApp number" /></label>
+      <label class="span-2">Address <input type="text" name="address" placeholder="Address" style="width:100%;" /></label>
+      <label class="span-2">Projects (multi-select)
+        <select name="project_ids" multiple style="min-height:80px;">
+          {% for pr in projects %}
+            <option value="{{ pr.id }}">{{ pr.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="span-2">Locations (one per line)
+        <textarea name="locations" rows="3" placeholder="Site A&#10;Block B"></textarea>
+      </label>
+      <div class="span-2">
+        <button type="submit" class="btn">Create user</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- List users -->
+  <div class="card" style="margin-top:14px;">
+    <h3 style="margin:0 0 10px 0;">Users</h3>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Phone / WhatsApp</th>
+          <th>Role</th>
+          <th>Projects</th>
+          <th>Locations</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+          <tr>
+            <td><strong>{{ u.name }}</strong></td>
+            <td><code>{{ u.email }}</code></td>
+            <td class="muted">{{ u.phone or "—" }} / {{ u.whatsapp_phone or "—" }}</td>
+            <td><span class="badge">{{ u.role.value }}</span></td>
+            <td>{{ user_projects_map.get(u.id, [])|join(", ") or "—" }}</td>
+</think>
+Adding a notifications helper and PM project actions (activity reminders by date + defect reminders). Checking how to get WBS items by date:
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>
+TodoWrite
+            <td>
+              {% set ul = user_locations_map.get(u.id, []) %}
+              {{ ul|join(", ") or "—" }}
+            </td>
+            <td><a href="/users/{{ u.id }}/edit" class="btn ghost" style="padding:4px 8px;">Edit</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Role permissions (CRUD by resource) -->
+  <div class="card" style="margin-top:14px;">
+    <h3 style="margin:0 0 10px 0;">Role permissions — who has access to what (CRUD)</h3>
+    <p class="muted" style="margin:0 0 10px 0;">Set Create, Read, Update, Delete per role and resource. Save after changing.</p>
+    <form method="post" action="/users/permissions">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Resource</th>
+            {% for r in roles %}
+              <th colspan="4">{{ r.value }}</th>
+            {% endfor %}
+          </tr>
+          <tr>
+            <th></th>
+            {% for r in roles %}
+              <th>C</th><th>R</th><th>U</th><th>D</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for res in resources %}
+            <tr>
+              <td><strong>{{ res.value }}</strong></td>
+              {% for r in roles %}
+                {% set perm = perm_by_role_resource.get((r.value, res.value)) %}
+                <td><input type="checkbox" name="perm_{{ r.value }}_{{ res.value }}_c" {% if perm and perm.can_create %}checked{% endif %} /></td>
+                <td><input type="checkbox" name="perm_{{ r.value }}_{{ res.value }}_r" {% if not perm or perm.can_read %}checked{% endif %} /></td>
+                <td><input type="checkbox" name="perm_{{ r.value }}_{{ res.value }}_u" {% if perm and perm.can_update %}checked{% endif %} /></td>
+                <td><input type="checkbox" name="perm_{{ r.value }}_{{ res.value }}_d" {% if perm and perm.can_delete %}checked{% endif %} /></td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="submit" class="btn">Save permissions</button>
+    </form>
+  </div>
+{% endblock %}

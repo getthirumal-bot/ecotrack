@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="row">
+    <div>
+      <h2>Projects</h2>
+      <div class="muted">Create and monitor projects. Progress rolls up from WBS weightage.</div>
+    </div>
+    <div class="spacer"></div>
+  </div>
+
+  {% if role in ["architect","project_owner"] %}
+    <div class="card" style="margin-top:12px;">
+      <h3>Create Project</h3>
+      <form method="post" action="/projects/create">
+        <div class="grid cols-2-mobile cols-4">
+          <div>
+            <label>Name</label>
+            <input name="name" required />
+          </div>
+          <div>
+            <label>Budget (₹)</label>
+            <input name="budget" type="number" step="1" value="0" />
+          </div>
+          <div>
+            <label>Status</label>
+            <select name="status">
+              <option value="active">active</option>
+              <option value="on_hold">on_hold</option>
+              <option value="completed">completed</option>
+            </select>
+          </div>
+          <div>
+            <label>Type</label>
+            <select name="project_type">
+              <option value="implementation">Implementation</option>
+              <option value="maintenance">Maintenance</option>
+            </select>
+          </div>
+        </div>
+        <label>Description</label>
+        <textarea name="description"></textarea>
+        <button class="btn" type="submit">Create</button>
+      </form>
+    </div>
+  {% else %}
+    <div class="card" style="margin-top:12px;">
+      <div class="muted">You can view projects, but only Architect/Project Owner can create projects.</div>
+    </div>
+  {% endif %}
+
+  <div class="card" style="margin-top:12px;">
+    <h3>All Projects</h3>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Status</th>
+          <th>Progress</th>
+          <th>Budget</th>
+          <th>Actual</th>
+          <th>Variance</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in projects %}
+          <tr>
+            <td><a href="/projects/{{ row.p.id }}"><strong>{{ row.p.name }}</strong></a><div class="muted">{{ row.p.description }}</div></td>
+            <td><span class="badge">{{ row.p.status }}</span></td>
+            <td>{{ row.progress }}%</td>
+            <td>{{ money(row.p.budget) }}</td>
+            <td>{{ money(row.actual) }}</td>
+            <td>{{ money(row.variance) }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}
+

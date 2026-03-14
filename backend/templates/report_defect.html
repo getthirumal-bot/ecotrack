@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="theme-color" content="#0b1220" />
+    <title>Report Defect · Ecotrack</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="topbar">
+      <div class="brand">
+        <div class="brand-mark">Ecotrack</div>
+        <div class="brand-sub">Public defect report (works on mobile &amp; web)</div>
+      </div>
+      <div class="topbar-right">
+        <a class="btn ghost" href="/login">Staff login</a>
+      </div>
+    </div>
+    <main class="content">
+      <div class="card">
+        <h2>Report a Defect</h2>
+        <div class="muted">Report issues with photos, video, or voice. On mobile you can take a picture or record directly.</div>
+        {% if request.query_params.get("ok") %}
+          <div class="alert" style="border-color: rgba(57,217,138,.45); background: rgba(57,217,138,.12);">Thanks — your report was submitted.</div>
+        {% endif %}
+        {% if request.query_params.get("error") %}
+          <div class="alert" style="margin-top:10px;">Please fill in Project, Location, and Description.</div>
+        {% endif %}
+        <form method="post" action="/report-defect" enctype="multipart/form-data" style="margin-top:10px;">
+          <label>Project</label>
+          <select name="project_id" required>
+            {% for p in projects %}
+              <option value="{{ p.id }}">{{ p.name }}</option>
+            {% endfor %}
+          </select>
+          <div class="grid cols-3">
+            <div>
+              <label>Location</label>
+              <input name="location" required placeholder="e.g. Block A, Row 5" />
+            </div>
+            <div>
+              <label>Severity</label>
+              <select name="severity">
+                <option value="low">low</option>
+                <option value="medium" selected>medium</option>
+                <option value="high">high</option>
+                <option value="critical">critical</option>
+              </select>
+            </div>
+            <div>
+              <label>Your name (optional)</label>
+              <input name="reported_by" placeholder="Name" />
+            </div>
+          </div>
+          <label>Description</label>
+          <textarea name="description" required placeholder="Describe the issue…"></textarea>
+          <label>Contact (optional)</label>
+          <input name="reporter_contact" placeholder="Phone / WhatsApp" />
+
+          <div class="card" style="margin-top:14px; background: rgba(19,35,58,.5);">
+            <h3 style="margin:0 0 8px 0;">Photos / Video / Voice</h3>
+            <p class="muted" style="margin:0 0 10px 0;">Attach evidence. On mobile you can take a photo, record video, or leave a voice message.</p>
+            <label>Add files (image, video, or audio)</label>
+            <input type="file" name="files" multiple accept="image/*,video/*,audio/*" capture="environment" class="file-input" />
+            <p class="hint" style="margin-top:6px;">You can select multiple files. All will be attached when you submit.</p>
+          </div>
+
+          <button class="btn" type="submit" style="margin-top:14px;">Submit Report</button>
+        </form>
+      </div>
+      <div class="hint" style="margin-top:10px;">
+        Staff workflow: Helpdesk/QA validates → converts to maintenance task (view in Defects list after login).
+      </div>
+    </main>
+  </body>
+</html>

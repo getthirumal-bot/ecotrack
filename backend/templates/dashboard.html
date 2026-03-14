@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="row">
+    <div>
+      <h2>Executive Dashboard</h2>
+      <div class="muted">At a glance, then portfolio heat map.</div>
+    </div>
+    <div class="spacer"></div>
+    <a class="btn ghost" href="/projects">Go to Projects</a>
+  </div>
+
+  <!-- Top: overall project numbers, values, tasks -->
+  <div class="dashboard-glance">
+    <a href="/projects" class="card card-metric">
+      <span class="card-metric-label">Total Projects</span>
+      <span class="card-metric-value">{{ total_projects }}</span>
+      <span class="card-metric-hint">Portfolio</span>
+    </a>
+    <div class="card card-metric card-metric-static">
+      <span class="card-metric-label">Portfolio Progress</span>
+      <span class="card-metric-value">{{ at_glance.portfolio_progress_pct }}%</span>
+      <span class="card-metric-hint">Tasks completed</span>
+    </div>
+    <div class="card card-metric card-metric-static">
+      <span class="card-metric-label">Total Budget</span>
+      <span class="card-metric-value">{{ money(total_budget) }}</span>
+      <span class="card-metric-hint">Planned</span>
+    </div>
+    <div class="card card-metric card-metric-static">
+      <span class="card-metric-label">Total Actual</span>
+      <span class="card-metric-value">{{ money(total_actual) }}</span>
+      <span class="card-metric-hint">Variance {{ money(total_variance) }}</span>
+    </div>
+    <a href="/approvals" class="card card-metric">
+      <span class="card-metric-label">Pending Approvals</span>
+      <span class="card-metric-value">{{ at_glance.pending_approvals }}</span>
+      <span class="card-metric-hint">WBS · Defects · BOQ · Materials</span>
+    </a>
+  </div>
+
+  <!-- Charts: tasks first, then defects (fill space with counts and totals) -->
+  <div class="dashboard-charts">
+    <div class="dashboard-charts-col1">
+      <div class="card card-chart">
+        <h3 class="card-chart-title">WBS Status</h3>
+      <p class="muted card-chart-sub">Tasks across all projects · Total {{ at_glance.wbs_total }}</p>
+      <div class="donut-wrap">
+        <div class="donut" role="img" aria-label="WBS status breakdown"
+          style="--pct-completed: {{ (100.0 * at_glance.wbs_completed / at_glance.wbs_total) if at_glance.wbs_total else 0 }};
+                 --pct-in-progress: {{ (100.0 * at_glance.wbs_in_progress / at_glance.wbs_total) if at_glance.wbs_total else 0 }};
+                 --pct-pending: {{ (100.0 * at_glance.wbs_pending / at_glance.wbs_total) if at_glance.wbs_total else 0 }};
+                 --pct-pending-appr: {{ (100.0 * at_glance.wbs_pending_appr / at_glance.wbs_total) if at_glance.wbs_total else 0 }};
+                 --pct-rejected: {{ (100.0 * at_glance.wbs_rejected / at_glance.wbs_total) if at_glance.wbs_total else 0 }};">
+          <span class="donut-center">{{ at_glance.portfolio_progress_pct }}%</span>
+        </div>
+        <div class="donut-legend-counts">
+          <div class="wbs-legend-vertical">
+            <div class="wbs-legend-row"><span class="donut-legend-item completed">Done</span><span class="wbs-legend-num">{{ at_glance.wbs_completed }}</span></div>
+            <div class="wbs-legend-row"><span class="donut-legend-item in-progress">In progress</span><span class="wbs-legend-num">{{ at_glance.wbs_in_progress }}</span></div>
+            <div class="wbs-legend-row"><span class="donut-legend-item pending">Pending</span><span class="wbs-legend-num">{{ at_glance.wbs_pending }}</span></div>
+            <div class="wbs-legend-row"><span class="donut-legend-item pending-appr">Awaiting</span><span class="wbs-legend-num">{{ at_glance.wbs_pending_appr }}</span></div>
+            <div class="wbs-legend-row"><span class="donut-legend-item rejected">Rejected</span><span class="wbs-legend-num">{{ at_glance.wbs_rejected }}</span></div>
+          </div>
+        </div>
+      </div>
+      </div>
+      <a href="/defects" class="card card-defects-in-gap">
+        <div class="defect-summary-row">
+          <div class="defect-summary-block">
+            <span class="card-metric-label">Open Defects</span>
+            <span class="card-metric-value">{{ at_glance.open_defects }}</span>
+            <span class="card-metric-hint">Open {{ at_glance.defects_open }} · In progress {{ at_glance.defects_in_progress }}{% if at_glance.defects_reopened %} · Reopened {{ at_glance.defects_reopened }}{% endif %}{% if at_glance.defects_pending_appr %} · Pending appr {{ at_glance.defects_pending_appr }}{% endif %}</span>
+          </div>
+          <div class="defect-summary-divider"></div>
+          <div class="defect-summary-block defect-summary-urgent">
+            <span class="card-metric-label">Critical / High</span>
+            <span class="card-metric-value">{{ at_glance.critical_high_defects }}</span>
+            <span class="card-metric-hint">Critical {{ at_glance.defects_critical }} · High {{ at_glance.defects_high }}</span>
+          </div>
+        </div>
+      </a>
+    </div>
+    <div class="card card-chart">
+      <h3 class="card-chart-title">Defects by Severity</h3>
+      <p class="muted card-chart-sub">Open and in progress · Total {{ at_glance.open_defects }}</p>
+      <div class="bar-stack">
+        <div class="bar-row">
+          <span class="bar-label severity-critical">Critical</span>
+          <div class="bar-track"><div class="bar-fill severity-critical" style="width: {{ (100.0 * at_glance.defects_critical / at_glance.defects_max) if at_glance.defects_max else 0 }}%;"></div></div>
+          <span class="bar-value">{{ at_glance.defects_critical }}</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-label severity-high">High</span>
+          <div class="bar-track"><div class="bar-fill severity-high" style="width: {{ (100.0 * at_glance.defects_high / at_glance.defects_max) if at_glance.defects_max else 0 }}%;"></div></div>
+          <span class="bar-value">{{ at_glance.defects_high }}</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-label severity-medium">Medium</span>
+          <div class="bar-track"><div class="bar-fill severity-medium" style="width: {{ (100.0 * at_glance.defects_medium / at_glance.defects_max) if at_glance.defects_max else 0 }}%;"></div></div>
+          <span class="bar-value">{{ at_glance.defects_medium }}</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-label severity-low">Low</span>
+          <div class="bar-track"><div class="bar-fill severity-low" style="width: {{ (100.0 * at_glance.defects_low / at_glance.defects_max) if at_glance.defects_max else 0 }}%;"></div></div>
+          <span class="bar-value">{{ at_glance.defects_low }}</span>
+        </div>
+      </div>
+      <div class="card-chart-footer"><a href="/defects" class="btn ghost" style="padding:6px 10px; font-size:.88rem;">View all defects →</a></div>
+      <div class="defect-card-by-status">
+        <span class="muted">By status:</span>
+        <span>Open {{ at_glance.defects_open }} · In progress {{ at_glance.defects_in_progress }}{% if at_glance.defects_reopened %} · Reopened {{ at_glance.defects_reopened }}{% endif %}</span>
+        <span class="defect-card-urgent">Critical/High {{ at_glance.critical_high_defects }}</span>
+      </div>
+    </div>
+    <div class="card card-chart">
+      <h3 class="card-chart-title">Budget by Project</h3>
+      <p class="muted card-chart-sub">Share of total planned budget</p>
+      {% if budget_allocation %}
+      <div class="pie-wrap">
+        <div class="pie-donut" style="background: conic-gradient({% for s in budget_allocation %}var(--pie-{{ s.color_index }}) {{ s.start }}% {{ s.end }}%{% if not loop.last %}, {% endif %}{% endfor %});">
+          <span class="pie-center">{{ total_projects }} projects</span>
+        </div>
+        <div class="pie-legend">
+          {% for s in budget_allocation %}
+          <div class="pie-legend-row"><span class="pie-dot pie-{{ s.color_index }}"></span><span class="pie-name">{{ s.name }}</span><span class="pie-pct">{{ s.pct }}%</span></div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="card-chart-footer"><a href="/projects" class="btn ghost" style="padding:6px 10px; font-size:.88rem;">View projects →</a></div>
+      {% else %}
+      <p class="muted">No budget data yet.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Actual spend by project (separate card) -->
+  <div class="card card-spend-by-project">
+    <h3 class="card-chart-title">Actual spend by project</h3>
+    <p class="muted card-chart-sub">Share of total actual cost · <a href="/projects" style="color:inherit;">View projects →</a></p>
+    <div class="spend-bars">
+      {% for pr in projects|sort(attribute='actual', reverse=true) %}
+      <a href="/projects/{{ pr.id }}" class="spend-row" title="{{ pr.name }}: {{ money(pr.actual) }} ({{ (100.0 * pr.actual / total_actual) if total_actual else 0 }}%)">
+        <span class="spend-label">{{ pr.name }}</span>
+        <div class="spend-track"><div class="spend-fill" style="width: {{ (100.0 * pr.actual / total_actual) if total_actual else 0 }}%;"></div></div>
+        <span class="spend-pct">{{ (100.0 * pr.actual / total_actual)|round(0)|int if total_actual else 0 }}%</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:18px;">
+    <div class="row">
+      <h3 style="margin:0;">Portfolio Heat Map</h3>
+      <div class="spacer"></div>
+      <span class="badge green">Green</span>
+      <span class="badge yellow">Yellow</span>
+      <span class="badge red">Red</span>
+    </div>
+    <div class="tiles" style="margin-top:12px;">
+      {% for pr in projects %}
+        <a class="tile" href="/projects/{{ pr.id }}">
+          <div class="title">
+            <strong>{{ pr.name }}</strong>
+            <span class="badge {{ pr.health }}">{{ pr.health|upper }}</span>
+          </div>
+          <div class="muted" style="margin-top:6px;">
+            Budget: {{ money(pr.budget) }} · Actual: {{ money(pr.actual) }} · Variance: {{ money(pr.variance) }}
+          </div>
+          <div class="progress">
+            <div style="width: {{ pr.progress }}%"></div>
+          </div>
+          <div class="hint" style="margin-top:6px;">Progress: {{ pr.progress }}%</div>
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+{% endblock %}

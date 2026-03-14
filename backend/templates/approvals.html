@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="row">
+    <div>
+      <h2>Approvals Queue</h2>
+      <div class="muted">Review WBS completions, defect resolutions, and BOM/BOQ changes. Approve or reject with a reason where needed.</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="pill">WBS: <strong>{{ pending_wbs|length }}</strong> · Defects: <strong>{{ pending_defects|length }}</strong> · BOQ: <strong>{{ pending_boq|length }}</strong> · Materials: <strong>{{ pending_materials|length }}</strong></div>
+  </div>
+
+  <!-- WBS items pending approval -->
+  <div class="card" style="margin-top:12px;">
+    <h3 style="margin:0 0 8px 0;">WBS / Tasks (pending_approval)</h3>
+    <p class="muted" style="margin:0 0 10px 0;">Tasks marked complete by Field Manager; approve or reject.</p>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Project</th>
+          <th>Item</th>
+          <th>Type</th>
+          <th>Weight</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for i in pending_wbs %}
+          <tr>
+            <td><strong>{{ projects[i.project_id].name if i.project_id in projects else i.project_id }}</strong></td>
+            <td>{{ i.name }}</td>
+            <td><span class="badge">{{ i.item_type }}</span></td>
+            <td>{{ i.weight }}%</td>
+            <td>
+              <div class="row">
+                <form method="post" action="/approvals/wbs/{{ i.id }}">
+                  <input type="hidden" name="action" value="approve" />
+                  <button class="btn" type="submit">Approve</button>
+                </form>
+                <form method="post" action="/approvals/wbs/{{ i.id }}" class="row" style="gap:8px;">
+                  <input type="hidden" name="action" value="reject" />
+                  <input name="reason" placeholder="Rejection reason" style="margin:0; width: 240px;" />
+                  <button class="btn danger" type="submit">Reject</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if not pending_wbs %}<div class="muted">No WBS items pending approval.</div>{% endif %}
+  </div>
+
+  <!-- Defects pending approval (resolution) -->
+  <div class="card" style="margin-top:12px;">
+    <h3 style="margin:0 0 8px 0;">Defects (pending_approval)</h3>
+    <p class="muted" style="margin:0 0 10px 0;">Defects marked resolved; approve or reopen.</p>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Project</th>
+          <th>Location</th>
+          <th>Description</th>
+          <th>Severity</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in pending_defects %}
+          <tr>
+            <td><strong>{{ projects[d.project_id].name if d.project_id in projects else d.project_id }}</strong></td>
+            <td>{{ d.location }}</td>
+            <td>{{ d.description[:80] }}{% if d.description|length > 80 %}…{% endif %}</td>
+            <td><span class="badge severity-{{ d.severity.value if d.severity else 'medium' }}">{{ (d.severity.value if d.severity else 'medium')|upper }}</span></td>
+            <td>
+              <div class="row">
+                <form method="post" action="/approvals/defect/{{ d.id }}">
+                  <input type="hidden" name="action" value="approve" />
+                  <button class="btn" type="submit">Approve</button>
+                </form>
+                <form method="post" action="/approvals/defect/{{ d.id }}" class="row" style="gap:8px;">
+                  <input type="hidden" name="action" value="reject" />
+                  <input name="reason" placeholder="Rejection reason" style="margin:0; width: 240px;" />
+                  <button class="btn danger" type="submit">Reopen</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if not pending_defects %}<div class="muted">No defects pending approval.</div>{% endif %}
+  </div>
+
+  <!-- BOQ/BOM changes pending approval -->
+  <div class="card" style="margin-top:12px;">
+    <h3 style="margin:0 0 8px 0;">BOQ / BOM changes (pending approval)</h3>
+    <p class="muted" style="margin:0 0 10px 0;">Actual quantity updates by Field Manager; approve or revert to estimated.</p>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Project</th>
+          <th>Material</th>
+          <th>WBS / Task</th>
+          <th>Est Qty</th>
+          <th>Act Qty</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in pending_boq %}
+          <tr>
+            <td><strong>{{ projects[b.project_id].name if b.project_id in projects else b.project_id }}</strong></td>
+            <td>{{ b.material_name }}</td>
+            <td>{{ wbs_by_id[b.wbs_item_id].name if b.wbs_item_id and b.wbs_item_id in wbs_by_id else "—" }}</td>
+            <td>{{ b.estimated_quantity }}</td>
+            <td><strong>{{ b.actual_quantity }}</strong></td>
+            <td>
+              <div class="row">
+                <form method="post" action="/approvals/boq/{{ b.id }}">
+                  <input type="hidden" name="action" value="approve" />
+                  <button class="btn" type="submit">Approve</button>
+                </form>
+                <form method="post" action="/approvals/boq/{{ b.id }}">
+                  <input type="hidden" name="action" value="reject" />
+                  <button class="btn danger" type="submit">Revert to Est</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if not pending_boq %}<div class="muted">No BOQ changes pending approval.</div>{% endif %}
+  </div>
+
+  <!-- Master data: Materials pending approval -->
+  <div class="card" style="margin-top:12px;">
+    <h3 style="margin:0 0 8px 0;">Materials (pending approval)</h3>
+    <p class="muted" style="margin:0 0 10px 0;">New or edited materials by Supervisor/Field; approve or reject (reject clears from queue, material stays).</p>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Default unit</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in pending_materials %}
+          <tr>
+            <td><strong>{{ m.name }}</strong></td>
+            <td>{{ m.default_unit }}</td>
+            <td>
+              <div class="row">
+                <form method="post" action="/approvals/material/{{ m.id }}">
+                  <input type="hidden" name="action" value="approve" />
+                  <button class="btn" type="submit">Approve</button>
+                </form>
+                <form method="post" action="/approvals/material/{{ m.id }}" style="display:inline;">
+                  <input type="hidden" name="action" value="reject" />
+                  <button class="btn danger" type="submit">Reject</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if not pending_materials %}<div class="muted">No materials pending approval.</div>{% endif %}
+  </div>
+
+  <div class="hint" style="margin-top:10px;">
+    WBS completion, defect resolution, BOQ/Material create or change by Supervisor or Field go to this queue. Architect, Project Owner, or Supervisor can approve or reject.
+  </div>
+{% endblock %}

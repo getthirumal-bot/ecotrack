@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="row">
+    <div>
+      <h2>Maintenance</h2>
+      <div class="muted">Monthly plans and tasks for maintenance projects. Copy previous month to plan ahead.</div>
+    </div>
+    <div class="spacer"></div>
+    <a class="btn ghost" href="/projects">Projects</a>
+  </div>
+
+  <div class="card" style="margin-top:12px;">
+    <h3>Maintenance Projects</h3>
+    {% if not project_summaries %}
+      <p class="muted">No maintenance projects yet. Create a project and set its type to <strong>Maintenance</strong> on the Projects page.</p>
+      <a class="btn" href="/projects">Go to Projects</a>
+    {% else %}
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Project</th>
+            <th>Recent months</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in project_summaries %}
+            <tr>
+              <td>
+                <a href="/maintenance/project/{{ item.project.id }}"><strong>{{ item.project.name }}</strong></a>
+                {% if item.project.description %}<div class="muted">{{ item.project.description }}</div>{% endif %}
+              </td>
+              <td>
+                {% for d in item.months[:3] %}
+                  <span class="badge">{{ d.month.year }}-{{ '%02d'|format(d.month.month) }}</span> {{ d.done }}/{{ d.total }}
+                  {% if not loop.last %} · {% endif %}
+                {% endfor %}
+                {% if not item.months %}<span class="muted">No months yet</span>{% endif %}
+              </td>
+              <td><a class="btn ghost small" href="/maintenance/project/{{ item.project.id }}">Open</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+{% endblock %}

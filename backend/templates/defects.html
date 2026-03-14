@@ -1,0 +1,338 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="row">
+    <div>
+      <h2>Defects</h2>
+      <div class="muted">Log issues with optional WBS/task link. Add photo/video/audio. Status: open → in progress → resolved/closed; can reopen, cancel, or approve.</div>
+    </div>
+    <div class="spacer"></div>
+    <a class="btn ghost" href="/report-defect">Public report</a>
+  </div>
+
+  {% if request.query_params.get("error") %}
+    <div class="alert" style="margin-top:12px;">Please select a project and fill Location and Description.</div>
+  {% endif %}
+  <div class="card" style="margin-top:12px;">
+    <form method="get" action="/defects" class="row" style="align-items:end;">
+      <div style="min-width: 320px;">
+        <label>Project</label>
+        <select name="project_id" onchange="this.form.submit()">
+          {% for p in projects %}
+            <option value="{{ p.id }}" {% if p.id == project_id %}selected{% endif %}>{{ p.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </form>
+  </div>
+
+  <div class="card" style="margin-top:12px;">
+    <h3>Search defects</h3>
+    <p class="muted" style="margin:0 0 10px 0;">Filter by WBS, severity, status, or assignee. Click Search to apply.</p>
+    <form method="get" action="/defects" class="row" style="align-items:end; gap:10px; flex-wrap:wrap;">
+      <input type="hidden" name="project_id" value="{{ project_id }}" />
+      <div style="min-width:200px;">
+        <label>WBS / Task</label>
+        <select name="wbs_filter">
+          <option value="">All</option>
+          {% for opt in wbs_dropdown_options %}
+            <option value="{{ opt.id }}" {% if wbs_filter == opt.id %}selected{% endif %}>{{ opt.display }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div style="min-width:120px;">
+        <label>Severity</label>
+        <select name="severity_filter">
+          <option value="">All</option>
+          <option value="critical" {% if severity_filter == "critical" %}selected{% endif %}>critical</option>
+          <option value="high" {% if severity_filter == "high" %}selected{% endif %}>high</option>
+          <option value="medium" {% if severity_filter == "medium" %}selected{% endif %}>medium</option>
+          <option value="low" {% if severity_filter == "low" %}selected{% endif %}>low</option>
+        </select>
+      </div>
+      <div style="min-width:140px;">
+        <label>Status</label>
+        <select name="status_filter">
+          <option value="">All</option>
+          <option value="open" {% if status_filter == "open" %}selected{% endif %}>open</option>
+          <option value="in_progress" {% if status_filter == "in_progress" %}selected{% endif %}>in_progress</option>
+          <option value="pending_approval" {% if status_filter == "pending_approval" %}selected{% endif %}>pending_approval</option>
+          <option value="resolved" {% if status_filter == "resolved" %}selected{% endif %}>resolved</option>
+          <option value="closed" {% if status_filter == "closed" %}selected{% endif %}>closed</option>
+          <option value="reopened" {% if status_filter == "reopened" %}selected{% endif %}>reopened</option>
+          <option value="cancelled" {% if status_filter == "cancelled" %}selected{% endif %}>cancelled</option>
+          <option value="approved" {% if status_filter == "approved" %}selected{% endif %}>approved</option>
+        </select>
+      </div>
+      <div style="min-width:160px;">
+        <label>Assigned to</label>
+        <select name="assigned_filter">
+          <option value="">All</option>
+          {% for u in users %}
+            <option value="{{ u.id }}" {% if assigned_filter == u.id %}selected{% endif %}>{{ u.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="btn">Search</button>
+      <a class="btn ghost" href="/defects?project_id={{ project_id }}">Show all</a>
+    </form>
+  </div>
+
+  <div class="card" style="margin-top:12px;">
+    <h3>Report / Add Defect</h3>
+    {% if prefill %}
+      <p class="muted" style="margin:0 0 10px 0;">Creating defect for task: <strong>{{ prefill.wbs_name }}</strong>. Assign to team/branch, add description and save.</p>
+    {% endif %}
+    <form method="post" action="/defects/create" enctype="multipart/form-data">
+      <input type="hidden" name="project_id" value="{{ prefill.project_id if prefill else project_id }}" />
+      <div class="grid cols-3">
+        <div>
+          <label>Location</label>
+          <input name="location" value="{{ prefill.location if prefill else '' }}" required />
+        </div>
+        <div>
+          <label>Link to WBS / Task (optional)</label>
+          <select name="wbs_item_id">
+            <option value="">(none)</option>
+            {% for opt in wbs_dropdown_options %}
+              <option value="{{ opt.id }}" {% if prefill and prefill.wbs_item_id == opt.id %}selected{% endif %}>{{ opt.display }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Severity</label>
+          <select name="severity">
+            <option value="low">low</option>
+            <option value="medium" selected>medium</option>
+            <option value="high">high</option>
+            <option value="critical">critical</option>
+          </select>
+        </div>
+      </div>
+      <label>Description</label>
+      <textarea name="description" required placeholder="Describe the issue…"></textarea>
+      <div class="grid cols-3">
+        <div>
+          <label>Status</label>
+          <select name="status">
+            <option value="open" selected>open</option>
+            <option value="in_progress">in_progress</option>
+            <option value="pending_approval">pending_approval</option>
+            <option value="resolved">resolved</option>
+            <option value="closed">closed</option>
+            <option value="reopened">reopened</option>
+            <option value="cancelled">cancelled</option>
+            <option value="approved">approved</option>
+          </select>
+        </div>
+        <div>
+          <label>Reported By</label>
+          <input name="reported_by" value="{{ prefill.reported_by if prefill else '' }}" />
+        </div>
+        <div>
+          <label>Assign To</label>
+          <select name="assigned_to_user_id">
+            <option value="">(unassigned)</option>
+            {% for u in users %}
+              <option value="{{ u.id }}" {% if prefill and prefill.assigned_to_user_id == u.id %}selected{% endif %}>{{ u.name }} ({{ u.role }})</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <label>Reporter Contact</label>
+      <input name="reporter_contact" placeholder="Phone / WhatsApp" />
+      <div class="card" style="margin-top:12px; background: rgba(19,35,58,.5);">
+        <h4 style="margin:0 0 8px 0;">Attach files (optional)</h4>
+        <p class="muted" style="margin:0 0 8px 0;">Photos, video, or audio. You can also add more after creating the defect.</p>
+        <input type="file" name="files" multiple accept="image/*,video/*,audio/*" class="file-input" style="margin:0;" />
+      </div>
+      <button class="btn" type="submit" style="margin-top:12px;">Create Defect</button>
+    </form>
+  </div>
+
+  {% if role in ["architect","project_owner"] and project_id %}
+  <!-- PM: Send defect reminders -->
+  <div class="card" style="margin-top:12px;">
+    <h3 style="margin:0 0 10px 0;">Send defect reminders</h3>
+    {% if request.query_params.get("error") %}
+      <p class="muted" style="color: rgba(255,92,92,.9);">{{ request.query_params.get("error") }}</p>
+    {% endif %}
+    {% if request.query_params.get("msg") %}
+      <p class="muted" style="color: rgba(57,217,138,.9);">{{ request.query_params.get("msg") }}</p>
+    {% endif %}
+    {% if request.query_params.get("sent_defect") %}
+      <p class="muted" style="color: rgba(57,217,138,.9);">Defect reminders sent to {{ request.query_params.get("count", "0") }} assignee(s).</p>
+    {% endif %}
+    <p class="muted" style="margin:0 0 8px 0;">Select defects to send reminders for (open/in-progress defects only)</p>
+    <div style="margin-bottom:8px;">
+      <button type="button" class="btn ghost" onclick="selectAllDefects()" style="padding:4px 8px; font-size:.9rem;">Select all</button>
+      <button type="button" class="btn ghost" onclick="deselectAllDefects()" style="padding:4px 8px; font-size:.9rem;">Deselect all</button>
+    </div>
+    <form method="post" action="/defects/send-reminders" id="defect-reminders-form">
+      <input type="hidden" name="project_id" value="{{ project_id }}" />
+      <div id="defects-for-reminders" style="max-height:300px; overflow-y:auto; border:1px solid var(--border); padding:12px; border-radius:8px; background: rgba(19,35,58,.3);">
+        {% set has_open = false %}
+        {% for row in defects %}
+          {% set d = row.defect %}
+          {% set status_val = d.status.value if d.status else (d.status|string) %}
+          {% if status_val not in ["resolved","closed","cancelled","approved"] and d.assigned_to_user_id %}
+            {% set has_open = true %}
+            {% set assigned_name = users_by_id.get(d.assigned_to_user_id).name if d.assigned_to_user_id and users_by_id.get(d.assigned_to_user_id) else "—" %}
+            <div style="margin-bottom:6px;">
+              <input type="checkbox" name="selected_defect_ids" value="{{ d.id }}" id="defect-{{ d.id }}" class="defect-checkbox" checked />
+              <label for="defect-{{ d.id }}" style="cursor:pointer; margin-left:6px;">
+                <strong>#{{ d.display_number if d.display_number is not none else loop.index }}</strong> — {{ d.location }}: {{ d.description[:60] }}{% if d.description|length > 60 %}…{% endif %}
+                <span class="badge">{{ status_val }}</span>
+                <span class="badge severity-{{ d.severity.value if d.severity else 'medium' }}">{{ (d.severity.value if d.severity else 'medium')|upper }}</span>
+                <span class="muted">(Assigned: {{ assigned_name }})</span>
+              </label>
+            </div>
+          {% endif %}
+        {% endfor %}
+        {% if not has_open %}
+          <p class="muted">No open defects with assignees found.</p>
+        {% endif %}
+      </div>
+      <button type="submit" class="btn" style="margin-top:12px;">Send reminders for selected defects</button>
+    </form>
+  </div>
+  <script>
+    function selectAllDefects() {
+      document.querySelectorAll('.defect-checkbox').forEach(cb => cb.checked = true);
+    }
+    function deselectAllDefects() {
+      document.querySelectorAll('.defect-checkbox').forEach(cb => cb.checked = false);
+    }
+  </script>
+  {% endif %}
+
+  <div class="card" style="margin-top:12px;">
+    <h3>Defect List</h3>
+    <p class="muted" style="margin:0 0 8px 0;">Click a column header to sort. Attach files with Upload; Edit/Delete for Architect & Project Owner.</p>
+    <table class="table table-sortable" id="defects-table">
+      <thead>
+        <tr>
+          <th class="sortable" data-sort="number">#</th>
+          <th class="sortable" data-sort="severity">Severity</th>
+          <th class="sortable" data-sort="status">Status</th>
+          <th class="sortable" data-sort="location">Location</th>
+          <th class="sortable" data-sort="wbs">WBS / Task</th>
+          <th class="sortable" data-sort="description">Description</th>
+          <th class="sortable" data-sort="reported">Reported By</th>
+          <th class="sortable" data-sort="assigned">Assigned</th>
+          <th>Attachments</th>
+          <th>Update Status</th>
+          <th>Upload</th>
+          {% if role in ["architect","project_owner"] %}
+            <th>Edit / Delete</th>
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in defects %}
+          {% set d = row.defect %}
+          {% set sev_val = row.severity_display %}
+          {% set status_val = row.status_display %}
+          {% set assigned_name = users_by_id.get(d.assigned_to_user_id).name if d.assigned_to_user_id and users_by_id.get(d.assigned_to_user_id) else "—" %}
+          {% set defect_num = d.display_number if d.display_number is not none else loop.index %}
+          <tr data-number="{{ defect_num }}" data-severity="{{ sev_val }}" data-status="{{ status_val }}" data-location="{{ d.location }}" data-wbs="{{ row.wbs_name or '' }}" data-description="{{ d.description }}" data-reported="{{ d.reported_by or '' }}" data-assigned="{{ assigned_name }}">
+            <td><strong>#{{ defect_num }}</strong></td>
+            <td>
+              <span class="badge severity-{{ sev_val }}">{{ sev_val|upper }}</span>
+            </td>
+            <td><span class="badge">{{ status_val }}</span></td>
+            <td><strong>{{ d.location }}</strong></td>
+            <td class="muted">{{ row.wbs_name or "—" }}</td>
+            <td>{{ d.description }}</td>
+            <td class="muted">{{ d.reported_by or "—" }}{% if d.reporter_contact %} · {{ d.reporter_contact }}{% endif %}</td>
+            <td class="muted">{{ assigned_name }}</td>
+            <td>
+              {% if row.attachment_count > 0 %}
+                {{ row.attachment_count }} file(s):
+                {% for a in row.attachments %}
+                  <span class="badge {{ 'green' if (a.phase or 'before') == 'after' else '' }}" style="font-size:.75rem;">{{ a.phase or 'before' }}</span>
+                  <a href="/defects/attachments/{{ a.id }}" target="_blank" rel="noopener">{{ a.filename }}</a>{% if not loop.last %}, {% endif %}
+                {% endfor %}
+              {% else %}
+                <span class="muted">—</span>
+              {% endif %}
+            </td>
+            <td class="defect-cell-compact">
+              <form method="post" action="/defects/{{ d.id }}/status" class="row row-inline">
+                <input type="hidden" name="project_id" value="{{ project_id }}" />
+                <input type="hidden" name="wbs_filter" value="{{ wbs_filter or '' }}" />
+                <input type="hidden" name="severity_filter" value="{{ severity_filter or '' }}" />
+                <input type="hidden" name="status_filter" value="{{ status_filter or '' }}" />
+                <input type="hidden" name="assigned_filter" value="{{ assigned_filter or '' }}" />
+                <select name="status" style="margin:0; width:110px; padding:4px 6px;"><option value="open" {% if status_val == "open" %}selected{% endif %}>open</option><option value="in_progress" {% if status_val == "in_progress" %}selected{% endif %}>in_progress</option><option value="pending_approval" {% if status_val == "pending_approval" %}selected{% endif %}>pending_approval</option><option value="resolved" {% if status_val == "resolved" %}selected{% endif %}>resolved</option><option value="closed" {% if status_val == "closed" %}selected{% endif %}>closed</option><option value="reopened" {% if status_val == "reopened" %}selected{% endif %}>reopened</option><option value="cancelled" {% if status_val == "cancelled" %}selected{% endif %}>cancelled</option><option value="approved" {% if status_val == "approved" %}selected{% endif %}>approved</option></select>
+                <button class="btn ghost" type="submit" style="padding:4px 8px;">Save</button>
+              </form>
+            </td>
+            <td class="defect-cell-compact">
+              <form method="post" action="/defects/{{ d.id }}/attachments" enctype="multipart/form-data" class="row row-inline">
+                <input type="hidden" name="project_id" value="{{ project_id }}" />
+                <input type="hidden" name="wbs_filter" value="{{ wbs_filter or '' }}" />
+                <input type="hidden" name="severity_filter" value="{{ severity_filter or '' }}" />
+                <input type="hidden" name="status_filter" value="{{ status_filter or '' }}" />
+                <input type="hidden" name="assigned_filter" value="{{ assigned_filter or '' }}" />
+                <select name="phase" style="margin:0; width:70px; padding:4px 4px;"><option value="before">Before</option><option value="after">After</option></select>
+                <input type="file" name="files" multiple accept="image/*,video/*,audio/*" style="margin:0; width:100px;" />
+                <button class="btn ghost" type="submit" style="padding:4px 8px;">Upload</button>
+              </form>
+            </td>
+            {% if role in ["architect","project_owner"] %}
+              <td>
+                <a class="btn ghost" href="/defects/{{ d.id }}/edit?project_id={{ project_id }}{% if wbs_filter %}&wbs_filter={{ wbs_filter }}{% endif %}{% if severity_filter %}&severity_filter={{ severity_filter }}{% endif %}{% if status_filter %}&status_filter={{ status_filter }}{% endif %}{% if assigned_filter %}&assigned_filter={{ assigned_filter }}{% endif %}" style="padding:4px 8px;">Edit</a>
+                <form method="post" action="/defects/{{ d.id }}/delete" style="display:inline;">
+                  <input type="hidden" name="project_id" value="{{ project_id }}" />
+                  <input type="hidden" name="wbs_filter" value="{{ wbs_filter or '' }}" />
+                  <input type="hidden" name="severity_filter" value="{{ severity_filter or '' }}" />
+                  <input type="hidden" name="status_filter" value="{{ status_filter or '' }}" />
+                  <input type="hidden" name="assigned_filter" value="{{ assigned_filter or '' }}" />
+                  <button type="submit" class="btn danger" style="padding:4px 8px;" onclick="return confirm('Delete this defect?');">Delete</button>
+                </form>
+              </td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <style>
+    .row-inline { display: inline-flex; flex-wrap: nowrap; gap: 6px; align-items: center; }
+    .defect-cell-compact .row-inline { margin: 0; }
+    .table-sortable .sortable { cursor: pointer; user-select: none; }
+    .table-sortable .sortable:hover { text-decoration: underline; }
+  </style>
+  <script>
+    (function(){
+      var table = document.getElementById('defects-table');
+      if (!table) return;
+      var thead = table.querySelector('thead th.sortable');
+      if (!thead) return;
+      table.querySelectorAll('thead th.sortable').forEach(function(th){
+        th.addEventListener('click', function(){
+          var key = th.getAttribute('data-sort');
+          var tbody = table.querySelector('tbody');
+          var rows = Array.from(tbody.querySelectorAll('tr'));
+          var prevDir = th.getAttribute('data-dir');
+          var dir = (prevDir === 'asc') ? -1 : 1;
+          table.querySelectorAll('thead th.sortable').forEach(function(h){ h.removeAttribute('data-dir'); });
+          th.setAttribute('data-dir', dir === 1 ? 'asc' : 'desc');
+          rows.sort(function(a, b){
+            var va = a.getAttribute('data-' + key) || '';
+            var vb = b.getAttribute('data-' + key) || '';
+            if (key === 'number') {
+              var na = parseInt(va, 10) || 0, nb = parseInt(vb, 10) || 0;
+              if (na !== nb) return (na - nb) * dir;
+              return 0;
+            }
+            va = va.toLowerCase(); vb = vb.toLowerCase();
+            if (va < vb) return -1 * dir; if (va > vb) return 1 * dir; return 0;
+          });
+          rows.forEach(function(r){ tbody.appendChild(r); });
+        });
+      });
+    })();
+  </script>
+{% endblock %}

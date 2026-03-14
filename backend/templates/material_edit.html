@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="row">
+    <div>
+      <h2>Edit Material</h2>
+      <div class="muted">Update material name and default unit.</div>
+    </div>
+    <div class="spacer"></div>
+    <a class="btn ghost" href="/boq?project_id={{ project_id }}">← Back to BOQ</a>
+  </div>
+
+  {% if request.query_params.get("error") %}
+    <div class="alert" style="margin-top:10px;">{{ request.query_params.get("error") }}</div>
+  {% endif %}
+
+  <div class="card" style="margin-top:12px;">
+    <form method="post" action="/materials/{{ material.id }}/update">
+      <input type="hidden" name="project_id" value="{{ project_id }}" />
+      <div class="grid cols-2">
+        <div>
+          <label>Material name</label>
+          <input name="name" value="{{ material.name }}" required />
+        </div>
+        <div>
+          <label>Default unit</label>
+          <input name="default_unit" value="{{ material.default_unit }}" />
+        </div>
+      </div>
+      <button class="btn" type="submit">Save changes</button>
+    </form>
+  </div>
+{% endblock %}

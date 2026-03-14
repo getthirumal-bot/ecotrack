@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ title or "Ecotrack" }}</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    {% if user %}
+    <div class="topbar">
+      <div class="brand">
+        <button type="button" class="btn ghost mobile-menu-btn" id="mobile-menu-btn" aria-label="Menu">&#9776;</button>
+        <div class="brand-mark">Ecotrack</div>
+        <div class="brand-sub">Program & Project Tracker</div>
+      </div>
+      <div class="topbar-right">
+        <div class="pill">Signed in as <strong>{{ user.name }}</strong> ({{ role }})</div>
+        <a class="btn ghost" href="/logout">Logout</a>
+      </div>
+    </div>
+    <div class="layout">
+      <aside class="sidebar" id="sidebar">
+        {% if role in ["architect","project_owner"] %}
+          <a class="nav" href="/dashboard">Dashboard</a>
+          <a class="nav" href="/maintenance">Maintenance</a>
+        {% endif %}
+        <a class="nav" href="/projects">Projects</a>
+        <a class="nav" href="/wbs">WBS</a>
+        <a class="nav" href="/boq">BOQ / BOM</a>
+        <a class="nav" href="/defects">Defects</a>
+        {% if role in ["architect","project_owner","supervisor"] %}
+          <a class="nav" href="/approvals">Approvals</a>
+        {% endif %}
+        <div class="sidebar-sep"></div>
+        <a class="nav" href="/report-defect">Public defect report</a>
+        {% if role in ["architect","project_owner"] %}
+          <a class="nav" href="/users">User management</a>
+        {% endif %}
+      </aside>
+      <main class="content">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+    {% else %}
+      <main class="content">{% block content_anon %}{% endblock %}</main>
+    {% endif %}
+    <script>
+      (function(){
+        var btn = document.getElementById('mobile-menu-btn');
+        var sidebar = document.getElementById('sidebar');
+        if (btn && sidebar) {
+          btn.addEventListener('click', function(){ sidebar.classList.toggle('sidebar-open'); });
+          document.addEventListener('click', function(e){
+            if (sidebar.classList.contains('sidebar-open') && !sidebar.contains(e.target) && !btn.contains(e.target))
+              sidebar.classList.remove('sidebar-open');
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>
+

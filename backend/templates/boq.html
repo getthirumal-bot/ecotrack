@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="row">
+    <div>
+      <h2>BOQ / BOM</h2>
+      <div class="muted">Materials at activity/WBS level. Amounts and qty roll up to project cost vs budget. Prices masked for Field Manager.</div>
+    </div>
+    <div class="spacer"></div>
+  </div>
+
+  <div class="card" style="margin-top:12px;">
+    <form method="get" action="/boq" class="row" style="align-items:end;">
+      <div style="min-width: 320px;">
+        <label>Project</label>
+        <select name="project_id" onchange="this.form.submit()">
+          {% for p in projects %}
+            <option value="{{ p.id }}" {% if p.id == project_id %}selected{% endif %}>{{ p.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="spacer"></div>
+      {% if not mask_prices %}
+        <div class="pill">Budget: <strong>{{ money(project_budget) }}</strong></div>
+        <div class="pill">Roll-up Est: <strong>{{ money(costs.estimated_cost) }}</strong></div>
+        <div class="pill">Roll-up Actual: <strong>{{ money(costs.actual_cost) }}</strong></div>
+        <div class="pill">Variance: <strong>{{ money(costs.variance) }}</strong></div>
+      {% else %}
+        <div class="pill">Prices hidden for Field Manager</div>
+      {% endif %}
+    </form>
+  </div>
+
+  {% if request.query_params.get("error") %}
+    <div class="alert" style="margin-top:10px;">{{ request.query_params.get("error") }}</div>
+  {% endif %}
+
+  {% if role in ["architect","project_owner","supervisor","field_manager"] %}
+    <div class="card" style="margin-top:12px;">
+      <h3>Material master</h3>
+      <p class="muted" style="margin:0 0 10px 0;">Create materials to use in BOQ. Edit or delete below. Supervisor/Field create or edit goes to Approvals.</p>
+      <form method="post" action="/materials/create" class="row" style="align-items:end; gap:12px;">
+        <input type="hidden" name="redirect_to" value="boq" />
+        <input type="hidden" name="project_id" value="{{ project_id }}" />
+        <div>
+          <label>New material name</label>
+          <input name="name" placeholder="e.g. Bricks, Cement" style="margin:0; width:180px;" />
+        </div>
+        <div>
+          <label>Default unit</label>
+          <input name="default_unit" value="pcs" style="margin:0; width:80px;" />
+        </div>
+        <button class="btn ghost" type="submit">Create material</button>
+      </form>
+      {% if materials %}
+        <table class="table" style="margin-top:12px;">
+          <thead>
+            <tr><th>Name</th><th>Default unit</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            {% for m in materials %}
+              <tr>
+                <td><strong>{{ m.name }}</strong>{% if m.pending_approval %}<span class="badge" style="margin-left:8px;">Pending approval</span>{% endif %}</td>
+                <td>{{ m.default_unit }}</td>
+                <td>
+                  <a class="btn ghost" href="/materials/{{ m.id }}/edit?project_id={{ project_id }}" style="padding:4px 8px;">Edit</a>
+                  {% if role in ["architect","project_owner"] %}
+                  <form method="post" action="/materials/{{ m.id }}/delete" style="display:inline;">
+                    <input type="hidden" name="project_id" value="{{ project_id }}" />
+                    <button type="submit" class="btn danger" style="padding:4px 8px;" onclick="return confirm('Delete material {{ m.name }}? BOQ lines using it will keep the name as text.');">Delete</button>
+                  </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <h3>Search & Add Material</h3>
+      <p class="muted" style="margin:0 0 10px 0;">Filter the list below by WBS and/or Material, then click Search. Add new lines with the form (actual qty is updated in the list).</p>
+      <form method="get" action="/boq" class="row" style="align-items:end; gap:10px; margin-bottom:14px;">
+        <input type="hidden" name="project_id" value="{{ project_id }}" />
+        <div style="min-width:260px;">
+          <label>Filter by WBS / Activity / Task</label>
+          <select name="wbs_filter">
+            <option value="">All</option>
+            {% for opt in wbs_dropdown_options %}
+              <option value="{{ opt.id }}" {% if wbs_filter == opt.id %}selected{% endif %}>{{ opt.display }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div style="min-width:180px;">
+          <label>Filter by Material</label>
+          <select name="material_filter">
+            <option value="">All</option>
+            {% for mat in material_filter_options %}
+              <option value="{{ mat }}" {% if material_filter == mat %}selected{% endif %}>{{ mat }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button type="submit" class="btn">Search</button>
+        <a class="btn ghost" href="/boq?project_id={{ project_id }}">Show all</a>
+      </form>
+      <h4 style="margin:14px 0 8px 0;">Add Material (at WBS / Activity level)</h4>
+      <p class="muted" style="margin:0 0 8px 0;">Only approved materials appear below. New materials need approval in Approvals before use.</p>
+      <form method="post" action="/boq/create">
+        <input type="hidden" name="project_id" value="{{ project_id }}" />
+        <div class="grid cols-3">
+          <div>
+            <label>Material</label>
+            <select name="material_name" required>
+              <option value="">— Select material —</option>
+              {% for m in materials_approved %}
+                <option value="{{ m.name }}">{{ m.name }} ({{ m.default_unit }})</option>
+              {% endfor %}
+            </select>
+            <p class="hint" style="margin:2px 0 0 0;">Add new in Material master above; then approve in Approvals to use here.</p>
+          </div>
+          <div>
+            <label>WBS / Activity / Task</label>
+            <select name="wbs_item_id">
+              <option value="">(unassigned)</option>
+              {% for opt in wbs_dropdown_options %}
+                <option value="{{ opt.id }}">{{ opt.display }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>Unit</label>
+            <input name="unit" value="pcs" />
+          </div>
+        </div>
+        <div class="grid cols-2">
+          <div>
+            <label>Estimated Qty</label>
+            <input name="estimated_quantity" type="number" step="0.01" value="0" />
+          </div>
+          <div>
+            <label>Unit Price (₹)</label>
+            <input name="unit_price" type="number" step="0.01" value="0" />
+          </div>
+        </div>
+        <button class="btn" type="submit">Add</button>
+      </form>
+    </div>
+  {% endif %}
+
+  {% if role not in ["architect","project_owner"] %}
+  <div class="card" style="margin-top:12px;">
+    <h3>Search</h3>
+    <form method="get" action="/boq" class="row" style="align-items:end; gap:10px;">
+      <input type="hidden" name="project_id" value="{{ project_id }}" />
+      <div style="min-width:260px;">
+        <label>Filter by WBS / Activity / Task</label>
+        <select name="wbs_filter">
+          <option value="">All</option>
+          {% for opt in wbs_dropdown_options %}
+            <option value="{{ opt.id }}" {% if wbs_filter == opt.id %}selected{% endif %}>{{ opt.display }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div style="min-width:180px;">
+        <label>Filter by Material</label>
+        <select name="material_filter">
+          <option value="">All</option>
+          {% for mat in material_filter_options %}
+            <option value="{{ mat }}" {% if material_filter == mat %}selected{% endif %}>{{ mat }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="btn">Search</button>
+      <a class="btn ghost" href="/boq?project_id={{ project_id }}">Show all</a>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="card" style="margin-top:12px;">
+    <h3>Materials by WBS / Activity (roll-up to project)</h3>
+    <p class="muted" style="margin:0 0 10px 0;">Each block is one WBS/task. Use Search above to filter by WBS or Material.</p>
+    {% for group in grouped_boq %}
+      <details class="wbs-details boq-group boq-group-{{ loop.index0 % 5 }}" open style="margin: 12px 0; padding-left: 12px;">
+        <summary class="wbs-summary" style="cursor:pointer; list-style:none; display:flex; align-items:center; gap:10px;">
+          <strong>{{ group.wbs_display }}</strong>
+          <span class="muted">({{ group.bom_count }} BOM)</span>
+          {% if not mask_prices %}
+            <span class="muted">Est: {{ money(group.subtotal.estimated_cost) }} · Actual: {{ money(group.subtotal.actual_cost) }} · Var: {{ money(group.subtotal.variance) }}</span>
+          {% endif %}
+        </summary>
+        <table class="table" style="margin-top:8px;">
+          <thead>
+            <tr>
+              <th>Material</th>
+              <th>Unit</th>
+              <th>Est Qty</th>
+              <th>Act Qty</th>
+              {% if not mask_prices %}
+                <th>Unit Price</th>
+                <th>Est Cost</th>
+                <th>Act Cost</th>
+                <th>Variance</th>
+              {% endif %}
+              <th>Update Actual</th>
+              {% if role in ["architect","project_owner","supervisor","field_manager"] %}
+                <th>Edit / Delete</th>
+              {% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for i in group.line_items %}
+              {% set est_cost = (i.estimated_quantity or 0) * (i.unit_price or 0) %}
+              {% set act_cost = (i.actual_quantity or 0) * (i.unit_price or 0) %}
+              <tr>
+                <td><strong>{{ i.material_name }}</strong></td>
+                <td>{{ i.unit }}</td>
+                <td>{{ i.estimated_quantity }}</td>
+                <td>{{ i.actual_quantity }}</td>
+                {% if not mask_prices %}
+                  <td>{{ money(i.unit_price) }}</td>
+                  <td>{{ money(est_cost) }}</td>
+                  <td>{{ money(act_cost) }}</td>
+                  <td>{{ money(est_cost - act_cost) }}</td>
+                {% endif %}
+                <td>
+                  <form method="post" action="/boq/{{ i.id }}/actual" class="row">
+                    <input type="hidden" name="project_id" value="{{ project_id }}" />
+                    <input name="actual_quantity" type="number" step="0.01" value="{{ i.actual_quantity }}" style="margin:0; width:100px;" />
+                    <button class="btn ghost" type="submit" style="padding:4px 8px;">Save</button>
+                  </form>
+                </td>
+                {% if role in ["architect","project_owner","supervisor","field_manager"] %}
+                  <td>
+                    <a class="btn ghost" href="/boq/{{ i.id }}/edit?project_id={{ project_id }}{% if wbs_filter %}&wbs_filter={{ wbs_filter }}{% endif %}" style="padding:4px 8px;">Edit</a>
+                    {% if role in ["architect","project_owner"] %}
+                    <form method="post" action="/boq/{{ i.id }}/delete" style="display:inline;">
+                      <input type="hidden" name="project_id" value="{{ project_id }}" />
+                      {% if wbs_filter %}<input type="hidden" name="wbs_filter" value="{{ wbs_filter }}" />{% endif %}
+                      <button type="submit" class="btn danger" style="padding:4px 8px;" onclick="return confirm('Delete this BOQ line?');">Delete</button>
+                    </form>
+                    {% endif %}
+                  </td>
+                {% endif %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </details>
+    {% endfor %}
+    {% if not grouped_boq %}
+      <div class="muted">No BOQ items. Add materials above and assign to WBS/activity.</div>
+    {% endif %}
+    <div class="card" style="margin-top:14px; background: rgba(19,35,58,.5);">
+      <strong>Project roll-up vs budget</strong>
+      <div class="row" style="margin-top:8px;">
+        <span class="muted">Budget:</span> <strong>{{ money(project_budget) }}</strong>
+        {% if not mask_prices %}
+          <span class="muted">Roll-up estimated:</span> <strong>{{ money(costs.estimated_cost) }}</strong>
+          <span class="muted">Roll-up actual:</span> <strong>{{ money(costs.actual_cost) }}</strong>
+          <span class="muted">Variance (est − actual):</span> <strong>{{ money(costs.variance) }}</strong>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <style>
+    .wbs-details .wbs-summary::-webkit-details-marker { display: none; }
+  </style>
+{% endblock %}

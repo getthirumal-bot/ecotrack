@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="row">
+    <div>
+      <h2>Edit BOQ Line</h2>
+      <div class="muted">Update material, WBS link, quantities and price.</div>
+    </div>
+    <div class="spacer"></div>
+    <a class="btn ghost" href="/boq?project_id={{ project_id }}{% if wbs_filter %}&wbs_filter={{ wbs_filter }}{% endif %}">← Back to BOQ</a>
+  </div>
+
+  {% if request.query_params.get("error") %}
+    <div class="alert" style="margin-top:10px;">{{ request.query_params.get("error") }}</div>
+  {% endif %}
+
+  <div class="card" style="margin-top:12px;">
+    <form method="post" action="/boq/{{ item.id }}/update">
+      <input type="hidden" name="project_id" value="{{ project_id }}" />
+      {% if wbs_filter %}<input type="hidden" name="wbs_filter" value="{{ wbs_filter }}" />{% endif %}
+      <div class="grid cols-3">
+        <div>
+          <label>Material</label>
+          <select name="material_name" required>
+            {% for m in materials %}
+              <option value="{{ m.name }}" {% if item.material_name == m.name %}selected{% endif %}>{{ m.name }} ({{ m.default_unit }})</option>
+            {% endfor %}
+            {% if item.material_name %}
+              {% set mat_names = materials|map(attribute='name')|list %}
+              {% if item.material_name not in mat_names %}
+                <option value="{{ item.material_name }}" selected>{{ item.material_name }} (current)</option>
+              {% endif %}
+            {% endif %}
+          </select>
+        </div>
+        <div>
+          <label>WBS / Activity / Task</label>
+          <select name="wbs_item_id">
+            <option value="">(unassigned)</option>
+            {% for opt in wbs_dropdown_options %}
+              <option value="{{ opt.id }}" {% if item.wbs_item_id == opt.id %}selected{% endif %}>{{ opt.display }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Unit</label>
+          <input name="unit" value="{{ item.unit }}" />
+        </div>
+      </div>
+      <div class="grid cols-3">
+        <div>
+          <label>Estimated Qty</label>
+          <input name="estimated_quantity" type="number" step="0.01" value="{{ item.estimated_quantity }}" />
+        </div>
+        <div>
+          <label>Unit Price (₹)</label>
+          <input name="unit_price" type="number" step="0.01" value="{{ item.unit_price }}" />
+        </div>
+        <div>
+          <label>Actual Qty</label>
+          <input name="actual_quantity" type="number" step="0.01" value="{{ item.actual_quantity }}" />
+        </div>
+      </div>
+      <button class="btn" type="submit">Save changes</button>
+    </form>
+  </div>
+{% endblock %}

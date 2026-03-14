@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+
+# Local DB (production uses Postgres)
+*.db
+nrpt.db
+
+# Env and secrets
+.env
+.env.local
+*.pem
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Build / deploy
+dist/
+*.egg-info/
+
+# Local Cursor/agent
+agent-transcripts/
+terminals/
