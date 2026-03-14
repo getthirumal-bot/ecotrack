@@ -65,6 +65,24 @@ def get_current_user(
     return user
 
 
+def get_current_user_optional(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> Optional[User]:
+    """Like get_current_user but returns None if not logged in (for root redirect to login)."""
+    token = get_token_from_request(request)
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+    except JWTError:
+        return None
+    return session.exec(select(User).where(User.id == user_id)).first()
+
+
 def require_roles(*allowed: Role):
     allowed_set = {r.value for r in allowed}
 

@@ -20,7 +20,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from sqlalchemy.sql import func as sqlfunc
 from sqlmodel import Session, delete, select
 
-from .auth import create_access_token, hash_password, require_roles, verify_password
+from .auth import create_access_token, get_current_user_optional, hash_password, require_roles, verify_password
 from .db import create_db_and_tables, get_session
 from .notifications import send_activity_reminders as notify_activity_reminders
 from .notifications import send_defect_reminders as notify_defect_reminders
@@ -54,6 +54,14 @@ app = FastAPI(title="Ecotrack")
 _BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 templates = Jinja2Templates(directory=os.path.join(_BASE_DIR, "templates"))
 app.mount("/static", StaticFiles(directory=os.path.join(_BASE_DIR, "static")), name="static")
+
+
+@app.exception_handler(HTTPException)
+def http_exception_handler(request: Request, exc: HTTPException):
+    """When browser gets 401, redirect to login instead of showing JSON."""
+    if exc.status_code == 401 and "text/html" in (request.headers.get("accept") or ""):
+        return RedirectResponse(url="/login", status_code=302)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 def _now() -> datetime:
@@ -400,10 +408,13 @@ def ui_context(session: Session, user: User) -> Dict[str, Any]:
 @app.get("/", response_class=HTMLResponse)
 def home(
     request: Request,
-    user: User = Depends(require_roles(Role.architect, Role.project_owner, Role.supervisor, Role.field_manager)),
+    user: Optional[User] = Depends(get_current_user_optional),
     session: Session = Depends(get_session),
 ):
-    # executives land on dashboard; others land on projects
+    # Not logged in: show login page (so visiting the root URL in a browser works)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    # Executives land on dashboard; others land on projects
     if user.role in (Role.architect, Role.project_owner):
         return dashboard(request, user=user, session=session)
     return RedirectResponse("/projects", status_code=303)
