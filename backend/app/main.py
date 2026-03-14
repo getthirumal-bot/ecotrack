@@ -197,6 +197,24 @@ def build_wbs_dropdown_options(
     return out
 
 
+def wbs_path_for_item(w: WbsItem, wbs_by_id: Dict[str, WbsItem]) -> str:
+    """Full path for one WBS item using ' -> ' (matches WBS Excel template)."""
+    path_names = []
+    cur: Optional[WbsItem] = w
+    while cur is not None:
+        path_names.append(cur.name)
+        cur = wbs_by_id.get(cur.parent_id) if cur.parent_id else None
+    path_names.reverse()
+    return " -> ".join(path_names)
+
+
+def wbs_path_to_id_map(session: Session, project_id: str) -> Dict[str, str]:
+    """Map WBS full path string to wbs_item id for BOQ Excel import."""
+    items = session.exec(select(WbsItem).where(WbsItem.project_id == project_id)).all()
+    by_id = {i.id: i for i in items}
+    return {wbs_path_for_item(i, by_id): i.id for i in items}
+
+
 def wbs_display_path(wbs_id: Optional[str], wbs_by_id: Dict[str, WbsItem]) -> str:
     """Single WBS item full path for display (e.g. 'Parent → Child → Task')."""
     if not wbs_id:
@@ -335,6 +353,35 @@ def seed_if_empty(session: Session) -> None:
 def seed(session: Session = Depends(get_session)) -> str:
     seed_if_empty(session)
     return "Seeded (if empty)."
+
+
+@app.get("/seed-chukapalli", response_class=HTMLResponse)
+def seed_chukapalli(session: Session = Depends(get_session)):
+    """One-time: create maintenance project 'Chukapalli' if it does not exist."""
+    existing = session.exec(select(Project).where(Project.name == "Chukapalli")).first()
+    if existing:
+        return HTMLResponse(
+            "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Chukapalli</title></head><body>"
+            "<h1>Chukapalli</h1><p>Project already exists.</p>"
+            "<p><a href='/maintenance'>Open Maintenance</a> · <a href='/login'>Login</a></p></body></html>"
+        )
+    p = Project(
+        name="Chukapalli",
+        description="Maintenance project",
+        budget=0.0,
+        status=ProjectStatus.active,
+        project_type="maintenance",
+        created_by_user_id=None,
+        created_at=_now(),
+        updated_at=_now(),
+    )
+    session.add(p)
+    session.commit()
+    return HTMLResponse(
+        "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Chukapalli</title></head><body>"
+        "<h1>Chukapalli created</h1><p>Maintenance project has been created.</p>"
+        "<p><a href='/maintenance'>Open Maintenance</a> · <a href='/login'>Login</a></p></body></html>"
+    )
 
 
 def _seed_fresh_impl(session: Session) -> str:
@@ -1476,6 +1523,117 @@ def wbs_upload(
     return RedirectResponse(f"/wbs?project_id={project_id}&uploaded={count}", status_code=303)
 
 
+def _boq_excel_instructions() -> List[str]:
+    return [
+        "BOQ/BOM UPLOAD TEMPLATE - INSTRUCTIONS",
+        "",
+        "1. Fill in the 'BOQ_Data' sheet with your materials per activity (see column headers).",
+        "2. WBS_Path must match exactly a task/milestone path from your project's WBS (e.g. 'Earthwork & Drainage -> Grading and levelling').",
+        "   Leave WBS_Path empty to attach the line to 'Unassigned'.",
+        "3. Save as .xlsx and use the BOQ page Upload button.",
+        "",
+        "COLUMNS:",
+        "- WBS_Path: Full path of the WBS item (copy from WBS screen or template sample). Optional.",
+        "- Material_Name: Name of material (required). Creates Material Master if missing.",
+        "- Unit: e.g. pcs, m, kg, cum (default pcs).",
+        "- Estimated_Qty: Planned quantity.",
+        "- Unit_Price: Price per unit.",
+        "- Actual_Qty: Delivered/used quantity (optional, can be 0).",
+    ]
+
+
+def build_boq_excel_template(session: Session, project_id: str) -> bytes:
+    """Build Excel with Instructions and BOQ_Data sheet (headers + sample rows)."""
+    wb = Workbook()
+    ws_inst = wb.active
+    ws_inst.title = "Instructions"
+    for row_idx, line in enumerate(_boq_excel_instructions(), start=1):
+        ws_inst.cell(row=row_idx, column=1, value=line)
+    ws_inst.column_dimensions["A"].width = 80
+    path_to_id = wbs_path_to_id_map(session, project_id)
+    sample_paths = list(path_to_id.keys())[:5] if path_to_id else ["(Add WBS first, then download template again)"]
+    ws_data = wb.create_sheet("BOQ_Data", 1)
+    headers = ["WBS_Path", "Material_Name", "Unit", "Estimated_Qty", "Unit_Price", "Actual_Qty"]
+    for col, h in enumerate(headers, start=1):
+        c = ws_data.cell(row=1, column=col, value=h)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="1F2A44")
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    sample = [
+        (sample_paths[0] if sample_paths else "", "Bricks", "pcs", 5000, 12.5, 0),
+        (sample_paths[0] if sample_paths else "", "Cement", "bags", 200, 450, 0),
+        ("", "Labour (skilled)", "days", 30, 800, 0),
+    ]
+    for row_idx, row in enumerate(sample, start=2):
+        for col_idx, val in enumerate(row, start=1):
+            ws_data.cell(row=row_idx, column=col_idx, value=val)
+    ws_data.column_dimensions["A"].width = 45
+    ws_data.column_dimensions["B"].width = 24
+    for col in "CDEF":
+        ws_data.column_dimensions[col].width = 14
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def parse_boq_excel_and_load(
+    session: Session, project_id: str, file_bytes: bytes, user_role: Role
+) -> int:
+    """Parse BOQ_Data sheet; create MaterialMaster if needed and BoqItem. Returns count created."""
+    wb = openpyxl_load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+    if "BOQ_Data" not in wb.sheetnames:
+        raise ValueError("Sheet 'BOQ_Data' not found. Use the downloaded template.")
+    ws = wb["BOQ_Data"]
+    rows = list(ws.iter_rows(min_row=2, values_only=True))
+    wb.close()
+    path_to_id = wbs_path_to_id_map(session, project_id)
+    materials_by_name = {m.name.strip(): m for m in session.exec(select(MaterialMaster)).all()}
+    created = 0
+    needs_approval = user_role in (Role.supervisor, Role.field_manager)
+    for row in rows:
+        if not row or len(row) < 2:
+            continue
+        wbs_path = (row[0] or "").strip() if row[0] is not None else ""
+        material_name = (row[1] or "").strip() if row[1] is not None else ""
+        if not material_name:
+            continue
+        unit = (row[2] or "pcs").strip() if len(row) > 2 and row[2] is not None else "pcs"
+        try:
+            est_qty = float(row[3]) if len(row) > 3 and row[3] is not None else 0.0
+        except (TypeError, ValueError):
+            est_qty = 0.0
+        try:
+            unit_price = float(row[4]) if len(row) > 4 and row[4] is not None else 0.0
+        except (TypeError, ValueError):
+            unit_price = 0.0
+        try:
+            actual_qty = float(row[5]) if len(row) > 5 and row[5] is not None else 0.0
+        except (TypeError, ValueError):
+            actual_qty = 0.0
+        wbs_item_id = path_to_id.get(wbs_path) if wbs_path else None
+        if material_name not in materials_by_name:
+            m = MaterialMaster(name=material_name, default_unit=unit or "pcs")
+            session.add(m)
+            session.flush()
+            materials_by_name[material_name] = m
+        item = BoqItem(
+            project_id=project_id,
+            wbs_item_id=wbs_item_id,
+            material_name=material_name,
+            unit=unit or "pcs",
+            estimated_quantity=est_qty,
+            unit_price=unit_price,
+            actual_quantity=actual_qty,
+            pending_approval=needs_approval,
+            created_at=_now(),
+            updated_at=_now(),
+        )
+        session.add(item)
+        created += 1
+    return created
+
+
 def compute_boq_rollup_by_wbs(session: Session, project_id: str) -> Dict[str, Dict[str, float]]:
     """Per wbs_item_id (and None for unassigned): estimated_cost, actual_cost, variance."""
     items = session.exec(select(BoqItem).where(BoqItem.project_id == project_id)).all()
@@ -1490,6 +1648,48 @@ def compute_boq_rollup_by_wbs(session: Session, project_id: str) -> Dict[str, Di
         rollup[key]["actual_cost"] += act
         rollup[key]["variance"] += est - act
     return rollup
+
+
+@app.get("/boq/template")
+def boq_download_template(
+    project_id: Optional[str] = None,
+    user: User = Depends(require_roles(Role.architect, Role.project_owner, Role.supervisor, Role.field_manager)),
+    session: Session = Depends(get_session),
+):
+    """Download BOQ/BOM Excel template with instructions and sample data."""
+    if not project_id:
+        projects = session.exec(select(Project).order_by(Project.name.asc())).all()
+        project_id = projects[0].id if projects else ""
+    content = build_boq_excel_template(session, project_id)
+    filename = "BOQ_Upload_Template.xlsx"
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/boq/upload")
+def boq_upload(
+    project_id: str = Form(...),
+    file: UploadFile = File(...),
+    user: User = Depends(require_roles(Role.architect, Role.project_owner, Role.supervisor)),
+    session: Session = Depends(get_session),
+):
+    """Upload filled BOQ Excel; creates BOQ lines (and materials if needed) for the project."""
+    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(400, "Please upload an Excel file (.xlsx).")
+    raw = file.file.read()
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(400, "File too large.")
+    try:
+        count = parse_boq_excel_and_load(session, project_id, raw, user.role)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"Invalid or unsupported Excel: {e!s}")
+    session.commit()
+    return RedirectResponse(f"/boq?project_id={project_id}&uploaded={count}", status_code=303)
 
 
 @app.get("/boq", response_class=HTMLResponse)
