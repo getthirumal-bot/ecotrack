@@ -597,10 +597,11 @@ def maintenance_dashboard(
     project_summaries = []
     for p in maintenance_projects:
         months = session.exec(
-            select(MaintenanceMonth).where(MaintenanceMonth.project_id == p.id).order_by(
-                MaintenanceMonth.year.desc(), MaintenanceMonth.month.desc()
-            )
-        ).limit(12).all()
+            select(MaintenanceMonth)
+            .where(MaintenanceMonth.project_id == p.id)
+            .order_by(MaintenanceMonth.year.desc(), MaintenanceMonth.month.desc())
+            .limit(12)
+        ).all()
         month_data = []
         for m in months:
             tasks = session.exec(select(MaintenanceTask).where(MaintenanceTask.maintenance_month_id == m.id)).all()
