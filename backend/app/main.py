@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
+import logging
 import os
 import traceback
+import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
@@ -17,11 +21,25 @@ from fastapi.templating import Jinja2Templates
 from openpyxl import Workbook
 from openpyxl import load_workbook as openpyxl_load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.sql import func as sqlfunc
 from sqlmodel import Session, delete, select
 
 from .auth import create_access_token, get_current_user_optional, hash_password, require_roles, verify_password
-from .db import create_db_and_tables, get_session
+from .config import settings
+from .db import create_db_and_tables, engine, get_session
+
+# #region agent log
+_DEBUG_LOG_PATH = Path(__file__).resolve().parent.parent.parent / "debug-52fa65.log"
+def _debug_log(location: str, message: str, data: dict, hypothesis_id: str, run_id: str = "run1") -> None:
+    try:
+        payload = {"sessionId": "52fa65", "runId": run_id, "hypothesisId": hypothesis_id, "location": location, "message": message, "data": data, "timestamp": int(time.time() * 1000)}
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, default=str) + "\n")
+    except Exception:
+        pass
+# #endregion
 from .notifications import send_activity_reminders as notify_activity_reminders
 from .notifications import send_defect_reminders as notify_defect_reminders
 from .seed_data import seed_demo_projects
@@ -62,6 +80,22 @@ def http_exception_handler(request: Request, exc: HTTPException):
     if exc.status_code == 401 and "text/html" in (request.headers.get("accept") or ""):
         return RedirectResponse(url="/login", status_code=302)
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(Exception)
+def unhandled_exception_handler(request: Request, exc: Exception):
+    """Capture any unhandled exception (e.g. in dependencies) and log it. If SHOW_ERRORS=1, return details in HTML."""
+    logging.exception("Unhandled exception: %s", exc)
+    show = os.environ.get("SHOW_ERRORS", "").lower() in ("1", "true", "yes")
+    if show:
+        return HTMLResponse(
+            content=f"<html><body><h1>Error</h1><pre>{type(exc).__name__}: {exc}</pre><pre>{traceback.format_exc()}</pre></body></html>",
+            status_code=500,
+        )
+    return HTMLResponse(
+        content="<html><body><h1>Internal Server Error</h1><p>Something went wrong.</p></body></html>",
+        status_code=500,
+    )
 
 
 def _now() -> datetime:
@@ -849,21 +883,87 @@ def maintenance_task_set_status(
     return RedirectResponse(f"/maintenance/project/{m.project_id}", status_code=303)
 
 
+def _is_project_type_missing_error(exc: Exception) -> bool:
+    """True if the exception looks like Postgres missing project_type column (any exception type)."""
+    return "project_type" in str(exc).lower()
+
+
+def _run_project_type_migration_once() -> bool:
+    """Run Postgres ALTER to add project_type if using Postgres. Returns True if migration was run."""
+    if not (settings.database_url or os.environ.get("DATABASE_URL")):
+        return False
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE project ADD COLUMN IF NOT EXISTS project_type VARCHAR DEFAULT 'implementation'"
+            ))
+        logging.info("Runtime migration: project_type column added to project table.")
+        return True
+    except Exception as e:
+        logging.warning("Runtime migration project_type failed: %s", e)
+        return False
+
+
 @app.get("/projects", response_class=HTMLResponse)
 def projects_page(
     request: Request,
     user: User = Depends(require_roles(Role.architect, Role.project_owner, Role.supervisor, Role.field_manager)),
     session: Session = Depends(get_session),
 ):
-    projects = session.exec(select(Project).order_by(Project.created_at.desc())).all()
-    cards = []
-    for p in projects:
-        costs = compute_project_costs(session, p.id)
-        progress = compute_wbs_progress(session, p.id)
-        cards.append({"p": p, "progress": progress, "actual": costs["actual_cost"], "variance": costs["variance"]})
-    ctx = ui_context(session, user)
-    ctx.update({"request": request, "projects": cards})
-    return templates.TemplateResponse("projects.html", ctx)
+    # Ensure project_type column exists on Postgres before query (self-heal on first request)
+    if settings.database_url or os.environ.get("DATABASE_URL"):
+        _run_project_type_migration_once()
+    # #region agent log
+    _debug_log("main.py:projects_page", "entry", {}, "H1")
+    # #endregion
+    def _render() -> HTMLResponse:
+        # #region agent log
+        _debug_log("main.py:_render", "before Project query", {}, "H1")
+        # #endregion
+        projects = session.exec(select(Project).order_by(Project.created_at.desc())).all()
+        cards = []
+        for p in projects:
+            costs = compute_project_costs(session, p.id)
+            progress = compute_wbs_progress(session, p.id)
+            cards.append({"p": p, "progress": progress, "actual": costs["actual_cost"], "variance": costs["variance"]})
+        ctx = ui_context(session, user)
+        ctx.update({"request": request, "projects": cards})
+        # #region agent log
+        _debug_log("main.py:_render", "before TemplateResponse", {"cards_len": len(cards)}, "H5")
+        # #endregion
+        return templates.TemplateResponse("projects.html", ctx)
+
+    try:
+        return _render()
+    except Exception as e:
+        # #region agent log
+        is_pt = _is_project_type_missing_error(e)
+        _debug_log("main.py:projects_page", "exception caught", {"exc_type": type(e).__name__, "exc_msg": str(e)[:500], "is_project_type_error": is_pt}, "H1")
+        # #endregion
+        if is_pt and _run_project_type_migration_once():
+            # #region agent log
+            _debug_log("main.py:projects_page", "retry after migration", {}, "H3")
+            # #endregion
+            try:
+                return _render()
+            except Exception as e2:
+                # #region agent log
+                _debug_log("main.py:projects_page", "retry failed", {"exc_type": type(e2).__name__, "exc_msg": str(e2)[:500]}, "H3")
+                # #endregion
+                logging.exception("Projects load failed after migration retry: %s", e2)
+                e = e2
+        else:
+            logging.exception("Projects load failed: %s", e)
+        show_errors = os.environ.get("SHOW_ERRORS", "").lower() in ("1", "true", "yes")
+        if show_errors:
+            return HTMLResponse(
+                content=f"<html><body><h1>Projects load failed</h1><pre>{type(e).__name__}: {e}</pre></body></html>",
+                status_code=500,
+            )
+        return HTMLResponse(
+            content="<html><body><h1>Internal Server Error</h1><p>Something went wrong loading projects.</p></body></html>",
+            status_code=500,
+        )
 
 
 @app.post("/projects/create")
