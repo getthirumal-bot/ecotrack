@@ -14,6 +14,10 @@ if settings.database_url:
         url = "postgresql://" + url[10:]
     engine = create_engine(url, pool_pre_ping=True)
 else:
+    logging.warning(
+        "Using SQLite. Data will not persist across container restarts/deploys. "
+        "For production, set DATABASE_URL (e.g. Postgres)."
+    )
     engine = create_engine(
         f"sqlite:///{settings.sqlite_path}",
         connect_args={"check_same_thread": False},

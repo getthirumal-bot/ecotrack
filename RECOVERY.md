@@ -55,6 +55,18 @@ The database was reset; the app and repo are fine.
 
 ---
 
+## 3b. Data disappears after each deploy (e.g. new maintenance project you created is gone)
+
+If projects or other UI-created data vanish after you push a new version, the app is using **SQLite** (no **DATABASE_URL**). Each deploy gets a new container with an empty database.
+
+**Fix:** Add a **Postgres** database and set **DATABASE_URL** so data persists:
+
+1. In your Railway project: **+ New** → **Database** → **PostgreSQL**.
+2. Open your **web service** → **Variables** → add **DATABASE_URL** (use “Add reference” and pick the Postgres service’s `DATABASE_URL`).
+3. Redeploy (or push a small change). After that, all UI-created data (projects, maintenance projects, etc.) will persist across deploys.
+
+---
+
 ## 4. If your **local folder** was deleted
 
 If you still have the GitHub repo:

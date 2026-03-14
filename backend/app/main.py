@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import os
+import sys
 import traceback
 import time
 from datetime import datetime
@@ -351,8 +352,23 @@ def project_health(*, budget: float, actual_cost: float, progress: float) -> str
     return "green"
 
 
+def _is_production_env() -> bool:
+    """True if running in a cloud/production environment (Railway, Render, etc.)."""
+    return bool(
+        os.environ.get("RAILWAY_ENVIRONMENT")
+        or os.environ.get("RAILWAY_SERVICE_NAME")
+        or os.environ.get("RENDER")
+    )
+
+
 @app.on_event("startup")
 def on_startup() -> None:
+    if _is_production_env() and not (settings.database_url or os.environ.get("DATABASE_URL")):
+        logging.critical(
+            "DATABASE_URL is required in production. Add Postgres (e.g. Railway Postgres) and set "
+            "DATABASE_URL so data persists across deploys. Without it, UI-created data is lost on every deploy."
+        )
+        sys.exit(1)
     create_db_and_tables()
 
 

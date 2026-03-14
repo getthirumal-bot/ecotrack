@@ -47,3 +47,9 @@ If Git asks for credentials: use a **Personal Access Token** as the password (Gi
 9. Open that URL. If the DB is empty, visit **https://your-url.up.railway.app/seed** once, then log in with `architect@nrpt.com` / `password`
 
 Done. You can close your laptop; the app runs on Railway.
+
+---
+
+## Data disappears after deploy?
+
+If projects or UI-created data (e.g. a new maintenance project) vanish after you push a new version, the app is using SQLite because **DATABASE_URL** is not set. Add **Postgres** (step 5 above) and set **DATABASE_URL** (step 6). After that, data persists across deploys.
