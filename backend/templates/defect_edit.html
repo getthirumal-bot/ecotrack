@@ -28,12 +28,16 @@
         </div>
         <div>
           <label>Link to WBS / Task</label>
-          <select name="wbs_item_id">
-            <option value="">(none)</option>
+          <select name="wbs_item_id" id="defect-edit-wbs-select">
+            <option value="" data-path="">(none)</option>
             {% for opt in wbs_dropdown_options %}
-              <option value="{{ opt.id }}" {% if defect.wbs_item_id == opt.id %}selected{% endif %}>{{ opt.display }}</option>
+              <option value="{{ opt.id }}" data-path="{{ (opt.path or '') | e }}" {% if defect.wbs_item_id == opt.id %}selected{% endif %}>{{ opt.display }}</option>
             {% endfor %}
           </select>
+          <div style="margin-top:6px;">
+            <label class="muted" style="font-size:0.9em;">Full path (selected WBS):</label>
+            <output id="defect-wbs-path-preview" class="block muted" style="font-size:0.9em; margin-top:2px;"></output>
+          </div>
         </div>
         <div>
           <label>Severity</label>
@@ -80,4 +84,18 @@
       <button class="btn" type="submit">Save changes</button>
     </form>
   </div>
+  <script>
+    (function() {
+      function updateDefectWbsPathPreview() {
+        var sel = document.getElementById('defect-edit-wbs-select');
+        var out = document.getElementById('defect-wbs-path-preview');
+        if (!out) return;
+        var path = (sel && sel.selectedIndex >= 0 && sel.options[sel.selectedIndex]) ? (sel.options[sel.selectedIndex].getAttribute('data-path') || '') : '';
+        out.textContent = path || '(none)';
+      }
+      var sel = document.getElementById('defect-edit-wbs-select');
+      if (sel) sel.addEventListener('change', updateDefectWbsPathPreview);
+      updateDefectWbsPathPreview();
+    })();
+  </script>
 {% endblock %}

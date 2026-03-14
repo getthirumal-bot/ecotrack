@@ -177,7 +177,7 @@ def build_wbs_tree(
     items: List[WbsItem],
     users_by_id: Dict[str, User],
 ) -> List[Dict[str, Any]]:
-    """Build nested tree from flat WBS items. Each node: item, children, primary_owner_name, secondary_owner_name."""
+    """Build nested tree from flat WBS items. Each node: item, children, path, primary_owner_name, secondary_owner_name."""
     by_parent: Dict[Optional[str], List[WbsItem]] = {}
     by_id: Dict[str, WbsItem] = {}
     for i in items:
@@ -186,30 +186,33 @@ def build_wbs_tree(
     for k in by_parent:
         by_parent[k].sort(key=lambda x: (x.name, x.id))
 
-    def node(item: WbsItem) -> Dict[str, Any]:
+    def node(item: WbsItem, path_so_far: str = "") -> Dict[str, Any]:
+        full_path = f"{path_so_far} → {item.name}" if path_so_far else item.name
         children = by_parent.get(item.id, [])
         u_primary = users_by_id.get(item.primary_owner_id) if item.primary_owner_id and item.primary_owner_id in users_by_id else None
         u_secondary = users_by_id.get(item.secondary_owner_id) if item.secondary_owner_id and item.secondary_owner_id in users_by_id else None
         return {
             "item": item,
-            "children": [node(c) for c in children],
+            "path": full_path,
+            "children": [node(c, full_path) for c in children],
             "primary_owner_name": u_primary.name if u_primary else None,
             "secondary_owner_name": u_secondary.name if u_secondary else None,
         }
 
-    roots = by_parent.get(None, [])
+    roots = (by_parent.get(None) or []) + (by_parent.get("") or [])
     return [node(r) for r in roots]
 
 
-def build_wbs_parent_options(tree: List[Dict[str, Any]], prefix: str = "") -> List[Dict[str, str]]:
-    """Flatten WBS tree into (id, display) for parent dropdown; prefix shows hierarchy (e.g. '  ' or 'Parent > ')."""
+def build_wbs_parent_options(tree: List[Dict[str, Any]], path_so_far: str = "") -> List[Dict[str, str]]:
+    """Flatten WBS tree into (id, display, path) for parent dropdown; display = full path (e.g. Parent → Child — type)."""
     out: List[Dict[str, str]] = []
     for node in tree:
         item = node["item"]
-        display = f"{prefix}{item.name} — {item.item_type.value}"
-        out.append({"id": item.id, "display": display})
+        full_path = f"{path_so_far} → {item.name}" if path_so_far else item.name
+        display = f"{full_path} — {item.item_type.value}"
+        out.append({"id": item.id, "display": display, "path": full_path})
         if node.get("children"):
-            out.extend(build_wbs_parent_options(node["children"], prefix=prefix + "  "))
+            out.extend(build_wbs_parent_options(node["children"], path_so_far=full_path))
     return out
 
 
@@ -227,7 +230,7 @@ def build_wbs_dropdown_options(
         path_names.reverse()
         path = " → ".join(path_names)
         display = f"{path} — {w.item_type.value}"
-        out.append({"id": w.id, "display": display})
+        out.append({"id": w.id, "display": display, "path": path})
     out.sort(key=lambda o: o["display"])
     return out
 
@@ -610,18 +613,36 @@ def home(
     return RedirectResponse("/projects", status_code=303)
 
 
-def _dashboard_at_a_glance(session: Session) -> Dict[str, Any]:
-    """Compute at-a-glance metrics and chart data for the dashboard top section."""
+def _dashboard_at_a_glance(session: Session, project_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Compute at-a-glance metrics for the dashboard. If project_ids is set, only include those projects."""
     open_statuses = (DefectStatus.open, DefectStatus.in_progress, DefectStatus.reopened, DefectStatus.pending_approval)
-    all_defects = session.exec(select(Defect)).all()
+    defect_stmt = select(Defect)
+    if project_ids is not None:
+        defect_stmt = defect_stmt.where(Defect.project_id.in_(project_ids))
+    all_defects = session.exec(defect_stmt).all()
     open_defects = sum(1 for d in all_defects if d.status in open_statuses)
     critical_high = sum(1 for d in all_defects if d.severity in (DefectSeverity.critical, DefectSeverity.high) and d.status in open_statuses)
-    pending_wbs = session.exec(select(WbsItem).where(WbsItem.status == WbsStatus.pending_approval)).all()
-    pending_defects_approval = session.exec(select(Defect).where(Defect.status == DefectStatus.pending_approval)).all()
-    pending_boq = session.exec(select(BoqItem).where(BoqItem.pending_approval == True)).all()
-    pending_materials = session.exec(select(MaterialMaster).where(MaterialMaster.pending_approval == True)).all()
+    wbs_stmt = select(WbsItem).where(WbsItem.status == WbsStatus.pending_approval)
+    if project_ids is not None:
+        wbs_stmt = wbs_stmt.where(WbsItem.project_id.in_(project_ids))
+    pending_wbs = session.exec(wbs_stmt).all()
+    def_stmt = select(Defect).where(Defect.status == DefectStatus.pending_approval)
+    if project_ids is not None:
+        def_stmt = def_stmt.where(Defect.project_id.in_(project_ids))
+    pending_defects_approval = session.exec(def_stmt).all()
+    boq_stmt = select(BoqItem).where(BoqItem.pending_approval == True)
+    if project_ids is not None:
+        boq_stmt = boq_stmt.where(BoqItem.project_id.in_(project_ids))
+    pending_boq = session.exec(boq_stmt).all()
+    mat_stmt = select(MaterialMaster).where(MaterialMaster.pending_approval == True)
+    if project_ids is not None:
+        mat_stmt = mat_stmt.where(MaterialMaster.project_id.in_(project_ids))
+    pending_materials = session.exec(mat_stmt).all()
     pending_approvals = len(pending_wbs) + len(pending_defects_approval) + len(pending_boq) + len(pending_materials)
-    all_wbs = session.exec(select(WbsItem)).all()
+    all_wbs_stmt = select(WbsItem)
+    if project_ids is not None:
+        all_wbs_stmt = all_wbs_stmt.where(WbsItem.project_id.in_(project_ids))
+    all_wbs = session.exec(all_wbs_stmt).all()
     wbs_total = len(all_wbs) or 1
     wbs_completed = sum(1 for w in all_wbs if w.status == WbsStatus.completed)
     wbs_in_progress = sum(1 for w in all_wbs if w.status == WbsStatus.in_progress)
@@ -629,8 +650,12 @@ def _dashboard_at_a_glance(session: Session) -> Dict[str, Any]:
     wbs_pending_appr = sum(1 for w in all_wbs if w.status == WbsStatus.pending_approval)
     wbs_rejected = sum(1 for w in all_wbs if w.status == WbsStatus.rejected)
     portfolio_progress_pct = round(100.0 * wbs_completed / wbs_total, 1) if wbs_total else 0.0
-    total_budget = sum((p.budget or 0.0) for p in session.exec(select(Project)).all())
-    total_actual = sum(compute_project_costs(session, p.id)["actual_cost"] for p in session.exec(select(Project)).all())
+    proj_stmt = select(Project)
+    if project_ids is not None:
+        proj_stmt = proj_stmt.where(Project.id.in_(project_ids))
+    projects_for_totals = session.exec(proj_stmt).all()
+    total_budget = sum((p.budget or 0.0) for p in projects_for_totals)
+    total_actual = sum(compute_project_costs(session, p.id)["actual_cost"] for p in projects_for_totals)
     budget_used_pct = round(100.0 * total_actual / total_budget, 1) if total_budget and total_budget > 0 else 0.0
     open_defects_list = [d for d in all_defects if d.status in open_statuses]
     defects_critical = sum(1 for d in open_defects_list if getattr(d.severity, "value", str(d.severity)) == "critical")
@@ -672,7 +697,10 @@ def dashboard(
     user: User = Depends(require_roles(Role.architect, Role.project_owner)),
     session: Session = Depends(get_session),
 ):
-    projects = session.exec(select(Project).order_by(Project.created_at.desc())).all()
+    """Project Dashboard: implementation projects only. Maintenance projects are not included."""
+    projects = session.exec(
+        select(Project).where(Project.project_type == "implementation").order_by(Project.created_at.desc())
+    ).all()
     cards = []
     total_budget = 0.0
     total_actual = 0.0
@@ -693,7 +721,8 @@ def dashboard(
                 "health": health,
             }
         )
-    at_glance = _dashboard_at_a_glance(session)
+    project_ids = [p.id for p in projects]
+    at_glance = _dashboard_at_a_glance(session, project_ids=project_ids)
     # Budget allocation by project (for pie chart): name, pct, start%, end%, color_index; sort highest first
     budget_allocation = []
     if total_budget and total_budget > 0:
@@ -721,6 +750,11 @@ def dashboard(
             "total_variance": total_budget - total_actual,
             "at_glance": at_glance,
             "budget_allocation": budget_allocation,
+            "dashboard_title": "Project Dashboard",
+            "dashboard_subtitle": "Implementation projects · at a glance, then portfolio heat map.",
+            "dashboard_go_link": "/projects",
+            "dashboard_go_label": "Go to Projects",
+            "dashboard_view_projects_link": "/projects",
         }
     )
     return templates.TemplateResponse("dashboard.html", ctx)
@@ -732,11 +766,78 @@ def maintenance_dashboard(
     user: User = Depends(require_roles(Role.architect, Role.project_owner)),
     session: Session = Depends(get_session),
 ):
-    """Separate dashboard for maintenance projects: list projects, monthly view, comparison matrix."""
+    """Maintenance Dashboard: same look and feel as Project Dashboard, maintenance projects only."""
     maintenance_projects = session.exec(
         select(Project).where(Project.project_type == "maintenance").order_by(Project.name.asc())
     ).all()
-    # For each project, get recent months and task counts for summary
+    cards = []
+    total_budget = 0.0
+    total_actual = 0.0
+    for p in maintenance_projects:
+        costs = compute_project_costs(session, p.id)
+        progress = compute_wbs_progress(session, p.id)
+        health = project_health(budget=p.budget or 0.0, actual_cost=costs["actual_cost"], progress=progress)
+        total_budget += p.budget or 0.0
+        total_actual += costs["actual_cost"]
+        cards.append(
+            {
+                "id": p.id,
+                "name": p.name,
+                "budget": p.budget or 0.0,
+                "actual": costs["actual_cost"],
+                "variance": costs["variance"],
+                "progress": progress,
+                "health": health,
+            }
+        )
+    project_ids = [p.id for p in maintenance_projects]
+    at_glance = _dashboard_at_a_glance(session, project_ids=project_ids)
+    budget_allocation = []
+    if total_budget and total_budget > 0:
+        sorted_by_budget = sorted(cards, key=lambda c: c["budget"] or 0, reverse=True)
+        cumulative = 0.0
+        for i, c in enumerate(sorted_by_budget):
+            pct = 100.0 * (c["budget"] or 0) / total_budget
+            end = cumulative + pct
+            budget_allocation.append({
+                "name": c["name"],
+                "pct": round(pct, 1),
+                "start": round(cumulative, 1),
+                "end": round(end, 1),
+                "color_index": i % 10,
+            })
+            cumulative = end
+    ctx = ui_context(session, user)
+    ctx.update(
+        {
+            "request": request,
+            "projects": cards,
+            "total_projects": len(cards),
+            "total_budget": total_budget,
+            "total_actual": total_actual,
+            "total_variance": total_budget - total_actual,
+            "at_glance": at_glance,
+            "budget_allocation": budget_allocation,
+            "dashboard_title": "Maintenance Dashboard",
+            "dashboard_subtitle": "Maintenance projects · at a glance, then portfolio heat map.",
+            "dashboard_go_link": "/maintenance/plans",
+            "dashboard_go_label": "Go to maintenance plans",
+            "dashboard_view_projects_link": "/maintenance/plans",
+        }
+    )
+    return templates.TemplateResponse("dashboard.html", ctx)
+
+
+@app.get("/maintenance/plans", response_class=HTMLResponse)
+def maintenance_plans(
+    request: Request,
+    user: User = Depends(require_roles(Role.architect, Role.project_owner)),
+    session: Session = Depends(get_session),
+):
+    """List of maintenance projects with monthly plans (previous maintenance list page)."""
+    maintenance_projects = session.exec(
+        select(Project).where(Project.project_type == "maintenance").order_by(Project.name.asc())
+    ).all()
     project_summaries = []
     for p in maintenance_projects:
         months = session.exec(

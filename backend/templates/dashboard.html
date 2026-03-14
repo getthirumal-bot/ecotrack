@@ -3,16 +3,16 @@
 {% block content %}
   <div class="row">
     <div>
-      <h2>Executive Dashboard</h2>
-      <div class="muted">At a glance, then portfolio heat map.</div>
+      <h2>{{ dashboard_title or "Executive Dashboard" }}</h2>
+      <div class="muted">{{ dashboard_subtitle or "At a glance, then portfolio heat map." }}</div>
     </div>
     <div class="spacer"></div>
-    <a class="btn ghost" href="/projects">Go to Projects</a>
+    <a class="btn ghost" href="{{ dashboard_go_link or '/projects' }}">{{ dashboard_go_label or "Go to Projects" }}</a>
   </div>
 
   <!-- Top: overall project numbers, values, tasks -->
   <div class="dashboard-glance">
-    <a href="/projects" class="card card-metric">
+    <a href="{{ dashboard_view_projects_link or '/projects' }}" class="card card-metric">
       <span class="card-metric-label">Total Projects</span>
       <span class="card-metric-value">{{ total_projects }}</span>
       <span class="card-metric-hint">Portfolio</span>
@@ -127,7 +127,7 @@
           {% endfor %}
         </div>
       </div>
-      <div class="card-chart-footer"><a href="/projects" class="btn ghost" style="padding:6px 10px; font-size:.88rem;">View projects →</a></div>
+      <div class="card-chart-footer"><a href="{{ dashboard_view_projects_link or '/projects' }}" class="btn ghost" style="padding:6px 10px; font-size:.88rem;">View projects →</a></div>
       {% else %}
       <p class="muted">No budget data yet.</p>
       {% endif %}
@@ -137,7 +137,7 @@
   <!-- Actual spend by project (separate card) -->
   <div class="card card-spend-by-project">
     <h3 class="card-chart-title">Actual spend by project</h3>
-    <p class="muted card-chart-sub">Share of total actual cost · <a href="/projects" style="color:inherit;">View projects →</a></p>
+    <p class="muted card-chart-sub">Share of total actual cost · <a href="{{ dashboard_view_projects_link or '/projects' }}" style="color:inherit;">View projects →</a></p>
     <div class="spend-bars">
       {% for pr in projects|sort(attribute='actual', reverse=true) %}
       <a href="/projects/{{ pr.id }}" class="spend-row" title="{{ pr.name }}: {{ money(pr.actual) }} ({{ (100.0 * pr.actual / total_actual) if total_actual else 0 }}%)">
