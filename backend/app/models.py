@@ -152,6 +152,17 @@ class WbsItem(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class WbsPhoto(SQLModel, table=True):
+    """Before/after photo for task progress on a WBS item. One before and one after per item."""
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    wbs_item_id: str = Field(index=True)
+    phase: str = Field(index=True)  # "before" or "after"
+    filename: str = ""
+    content_type: str = ""
+    content_base64: Optional[str] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class MaterialMaster(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     name: str = Field(index=True, unique=True)
