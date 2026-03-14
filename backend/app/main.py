@@ -71,6 +71,7 @@ app = FastAPI(title="Ecotrack")
 # Resolve paths from this file so /boq and templates work from any CWD
 _BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 templates = Jinja2Templates(directory=os.path.join(_BASE_DIR, "templates"))
+templates.env.globals["hasattr"] = hasattr  # so templates can use hasattr(obj, 'attr')
 app.mount("/static", StaticFiles(directory=os.path.join(_BASE_DIR, "static")), name="static")
 
 
@@ -925,7 +926,8 @@ def projects_page(
         for p in projects:
             costs = compute_project_costs(session, p.id)
             progress = compute_wbs_progress(session, p.id)
-            cards.append({"p": p, "progress": progress, "actual": costs["actual_cost"], "variance": costs["variance"]})
+            status_display = p.status.value if hasattr(p.status, "value") else str(p.status)
+            cards.append({"p": p, "progress": progress, "actual": costs["actual_cost"], "variance": costs["variance"], "status_display": status_display})
         ctx = ui_context(session, user)
         ctx.update({"request": request, "projects": cards})
         # #region agent log
