@@ -5,7 +5,6 @@ import io
 import json
 import logging
 import os
-import sys
 import traceback
 import time
 from datetime import datetime
@@ -365,10 +364,9 @@ def _is_production_env() -> bool:
 def on_startup() -> None:
     if _is_production_env() and not (settings.database_url or os.environ.get("DATABASE_URL")):
         logging.critical(
-            "DATABASE_URL is required in production. Add Postgres (e.g. Railway Postgres) and set "
+            "DATABASE_URL is not set in production. Add Postgres (e.g. Railway Postgres) and set "
             "DATABASE_URL so data persists across deploys. Without it, UI-created data is lost on every deploy."
         )
-        sys.exit(1)
     create_db_and_tables()
 
 
