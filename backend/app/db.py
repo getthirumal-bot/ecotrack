@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine
@@ -21,9 +22,27 @@ else:
 
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
-    # SQLite-only migrations (PRAGMA); skip for Postgres
-    if not (settings.database_url or os.environ.get("DATABASE_URL")):
+    if settings.database_url or os.environ.get("DATABASE_URL"):
+        _run_postgres_migrations()
+    else:
         _run_sqlite_migrations()
+
+
+def _run_postgres_migrations() -> None:
+    """Add columns to existing Postgres tables (create_all does not alter)."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE project ADD COLUMN IF NOT EXISTS project_type VARCHAR DEFAULT 'implementation'"
+            ))
+    except Exception as e:
+        logging.exception("Postgres migration failed: %s", e)
+    # Verify column exists so startup fails fast if migration did not apply
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT project_type FROM project LIMIT 1"))
+    except Exception as e:
+        logging.warning("Project table missing project_type column or project table empty: %s", e)
 
 
 def _run_sqlite_migrations() -> None:

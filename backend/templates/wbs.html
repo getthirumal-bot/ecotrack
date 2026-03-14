@@ -24,11 +24,12 @@
     </form>
     {% if role in ["architect","project_owner","supervisor"] %}
     <form method="post" action="/wbs/upload" enctype="multipart/form-data" class="row" style="align-items:end; gap:8px; margin-top:12px;">
-      <input type="hidden" name="project_id" value="{{ project_id }}" />
+      <input type="hidden" name="project_id" value="{{ project_id or '' }}" />
       <label style="margin:0;">Upload filled Excel</label>
       <input type="file" name="file" accept=".xlsx,.xls" style="margin:0; width:200px;" />
-      <button type="submit" class="btn">Upload</button>
+      <button type="submit" class="btn" {% if not project_id %}disabled title="Select a project above first"{% endif %}>Upload</button>
     </form>
+    {% if not project_id %}<p class="muted" style="margin:4px 0 0 0; font-size:0.9em;">Select a project above, then upload.</p>{% endif %}
     {% endif %}
     {% if request.query_params.get("error") %}
       <div class="alert" style="margin-top:10px;">{{ request.query_params.get("error") }}</div>

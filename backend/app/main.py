@@ -1704,19 +1704,25 @@ def wbs_upload(
     session: Session = Depends(get_session),
 ):
     """Upload filled WBS Excel; creates WBS items for the project."""
-    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
-        raise HTTPException(400, "Please upload an Excel file (.xlsx).")
+    base = f"/wbs?project_id={quote(project_id)}" if project_id else "/wbs?"
+
+    if not project_id or not project_id.strip():
+        return RedirectResponse("/wbs?error=" + quote("Please select a project first."), status_code=303)
+    if not file.filename:
+        return RedirectResponse(base + "&error=" + quote("No file selected. Please choose an Excel file (.xlsx or .xls) and try again."), status_code=303)
+    if not file.filename.lower().endswith((".xlsx", ".xls")):
+        return RedirectResponse(base + "&error=" + quote(f"File must be Excel (.xlsx or .xls). You uploaded: {file.filename or 'no filename'}."), status_code=303)
     raw = file.file.read()
     if len(raw) > 5 * 1024 * 1024:
-        raise HTTPException(400, "File too large.")
+        return RedirectResponse(base + "&error=" + quote("File too large (max 5 MB)."), status_code=303)
     try:
         count = parse_wbs_excel_and_load(session, project_id, raw)
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        return RedirectResponse(base + "&error=" + quote(str(e)), status_code=303)
     except Exception as e:
-        raise HTTPException(400, f"Invalid or unsupported Excel: {e!s}")
+        return RedirectResponse(base + "&error=" + quote(f"Invalid or unsupported Excel: {e!s}"), status_code=303)
     session.commit()
-    return RedirectResponse(f"/wbs?project_id={project_id}&uploaded={count}", status_code=303)
+    return RedirectResponse(f"/wbs?project_id={quote(project_id)}&uploaded={count}", status_code=303)
 
 
 def _boq_excel_instructions() -> List[str]:
