@@ -129,7 +129,7 @@
       <button type="button" class="btn ghost" onclick="document.querySelectorAll('.wbs-details').forEach(d=>d.open=true)">Expand all</button>
       <button type="button" class="btn ghost" onclick="document.querySelectorAll('.wbs-details').forEach(d=>d.open=false)">Collapse all</button>
     </div>
-    <p class="muted" style="margin:0 0 8px 0;">Architect / Project Owner: edit name, dates, resources, weight inline. Supervisor / Field: status only. Path is the full hierarchy (shown after the name). Scroll right for full row.</p>
+    <p class="muted" style="margin:0 0 8px 0;">Architect / Project Owner: edit name, dates, resources, weight inline. Supervisor / Field: status only. Scroll right for full row.</p>
     <div class="wbs-tree-scroll" style="margin-top:12px;">
       <div class="wbs-tree-inner">
       {% macro wbs_node(node, depth=0) %}
@@ -148,7 +148,6 @@
               <input type="hidden" name="project_id" value="{{ project_id }}" />
               <input type="hidden" name="open_ids" value="" />
               <input type="text" name="name" value="{{ node.item.name }}" class="wbs-inline-input" style="min-width:140px;" />
-              <span class="wbs-path muted">{{ node.path | default(node.item.name) }}</span>
               <select name="item_type" class="wbs-inline-select"><option value="milestone" {% if node.item.item_type == "milestone" %}selected{% endif %}>milestone</option><option value="sub_milestone" {% if node.item.item_type == "sub_milestone" %}selected{% endif %}>sub_milestone</option><option value="task" {% if node.item.item_type == "task" %}selected{% endif %}>task</option></select>
               <input type="number" name="weight" value="{{ node.item.weight }}" step="0.01" class="wbs-inline-input" style="width:56px;" />
               <select name="status" class="wbs-inline-select" style="width:120px;"><option value="pending" {% if node.item.status == "pending" %}selected{% endif %}>pending</option><option value="in_progress" {% if node.item.status == "in_progress" %}selected{% endif %}>in_progress</option><option value="pending_approval" {% if node.item.status == "pending_approval" %}selected{% endif %}>pending_approval</option><option value="completed" {% if node.item.status == "completed" %}selected{% endif %}>completed</option><option value="rejected" {% if node.item.status == "rejected" %}selected{% endif %}>rejected</option></select>
@@ -166,7 +165,6 @@
             </form>
             {% else %}
             <span class="wbs-name"><strong>{{ node.item.name }}</strong></span>
-            <span class="wbs-path muted">{{ node.path | default(node.item.name) }}</span>
             <span class="badge">{{ node.item.item_type }}</span>
             <span class="badge">{{ node.item.status }}</span>
             <span class="muted">Weight: {{ node.item.weight }}%</span>
@@ -207,7 +205,8 @@
 
     .wbs-tree-scroll { overflow-x: auto; }
     .wbs-tree-inner { min-width: 1600px; }
-    .wbs-details { padding-left: 10px; margin-bottom: 6px; border-radius: 8px; white-space: nowrap; }
+    .wbs-details { padding-left: 10px; margin-bottom: 6px; border-radius: 8px; white-space: nowrap; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+    .wbs-details:last-child { border-bottom: none; }
     .wbs-depth-0 { border-left: 4px solid rgba(57,217,138,.6); }
     .wbs-depth-1 { border-left: 4px solid rgba(247,201,72,.5); }
     .wbs-depth-2 { border-left: 4px solid rgba(100,149,237,.5); }
@@ -232,7 +231,6 @@
     .wbs-right { margin-left: auto; display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; flex-shrink: 0; }
     .wbs-dates, .wbs-owners { white-space: nowrap; }
     .wbs-actions { margin-left: 8px; }
-    .wbs-path { max-width: 320px; overflow-wrap: break-word; white-space: normal; display: inline-block; vertical-align: middle; }
   </style>
   <div id="wbs-open-ids" data-open="{{ request.query_params.get('open') or '' }}" style="display:none"></div>
   <script>
