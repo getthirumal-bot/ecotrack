@@ -384,6 +384,99 @@ def seed_chukapalli(session: Session = Depends(get_session)):
     )
 
 
+# Plantation maintenance tasks for Chukapalli (from plan: zones E–S, submilestones in workflow order)
+CHUKAPALLI_MAINTENANCE_TASKS = [
+    "Pit Marking",
+    "Pit Digging",
+    "Plant Shifting",
+    "Plantation",
+    "Soil Shifting",
+    "Soil Leveling",
+    "Seed Sowing",
+    "Cleaning",
+    "Watering",
+]
+
+
+def _ensure_chukapalli_month_tasks(
+    session: Session, project_id: str, year: int, month: int
+) -> bool:
+    """Ensure Chukapalli has the 9 plantation tasks for the given month. Returns True if tasks were added."""
+    m = session.exec(
+        select(MaintenanceMonth).where(
+            MaintenanceMonth.project_id == project_id,
+            MaintenanceMonth.year == year,
+            MaintenanceMonth.month == month,
+        )
+    ).first()
+    if not m:
+        m = MaintenanceMonth(project_id=project_id, year=year, month=month)
+        session.add(m)
+        session.commit()
+        session.refresh(m)
+    existing = session.exec(select(MaintenanceTask).where(MaintenanceTask.maintenance_month_id == m.id)).all()
+    if existing:
+        return False
+    for i, name in enumerate(CHUKAPALLI_MAINTENANCE_TASKS):
+        t = MaintenanceTask(maintenance_month_id=m.id, name=name, status="pending", sort_order=i)
+        session.add(t)
+    return True
+
+
+@app.get("/seed-chukapalli-tasks", response_class=HTMLResponse)
+def seed_chukapalli_tasks(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    session: Session = Depends(get_session),
+):
+    """Add plantation maintenance tasks to Chukapalli. Default: current month + March 2026. Or use ?year=2026&month=3."""
+    p = session.exec(
+        select(Project).where(Project.name == "Chukapalli", Project.project_type == "maintenance")
+    ).first()
+    if not p:
+        return HTMLResponse(
+            "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Chukapalli tasks</title></head><body>"
+            "<h1>Chukapalli not found</h1><p>Create a maintenance project named Chukapalli first.</p>"
+            "<p><a href='/maintenance'>Maintenance</a> · <a href='/projects'>Projects</a></p></body></html>",
+            status_code=404,
+        )
+    now = datetime.utcnow()
+    months_to_seed: List[Tuple[int, int]] = []
+    if year is not None and month is not None and 1 <= month <= 12:
+        months_to_seed.append((year, month))
+    else:
+        months_to_seed.append((now.year, now.month))
+        if (now.year, now.month) != (2026, 3):
+            months_to_seed.append((2026, 3))
+    added: List[str] = []
+    for y, m in months_to_seed:
+        if _ensure_chukapalli_month_tasks(session, p.id, y, m):
+            session.commit()
+            added.append(f"{y}-{m:02d}")
+    if not added:
+        return HTMLResponse(
+            "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Chukapalli tasks</title></head><body>"
+            "<h1>Tasks already present</h1><p>All requested months already have the plantation tasks.</p>"
+            f"<p><a href='/maintenance/project/{p.id}'>Open Chukapalli</a> · <a href='/maintenance'>Maintenance</a></p></body></html>"
+        )
+    return HTMLResponse(
+        "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Chukapalli tasks</title></head><body>"
+        f"<h1>Tasks added</h1><p>Added {len(CHUKAPALLI_MAINTENANCE_TASKS)} plantation tasks to Chukapalli for: <strong>{', '.join(added)}</strong></p>"
+        "<p>Tasks: " + ", ".join(CHUKAPALLI_MAINTENANCE_TASKS) + "</p>"
+        f"<p><a href='/maintenance/project/{p.id}'>Open Chukapalli</a> · <a href='/maintenance'>Maintenance</a></p></body></html>"
+    )
+
+
+@app.get("/seed_chukapalli_tasks", response_class=HTMLResponse)
+def seed_chukapalli_tasks_alt(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    session: Session = Depends(get_session),
+):
+    """Same as /seed-chukapalli-tasks (alternate URL with underscores)."""
+    return seed_chukapalli_tasks(year=year, month=month, session=session)
+
+
 def _seed_fresh_impl(session: Session) -> str:
     """Clear all data and repopulate with 10 projects and full supporting data."""
     clear_all_data(session)

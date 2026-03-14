@@ -20,6 +20,15 @@
         </select>
       </div>
       <div class="spacer"></div>
+      <a href="/boq/template?project_id={{ project_id }}" class="btn ghost" download>Download BOQ template</a>
+      {% if role in ["architect","project_owner","supervisor"] %}
+        <form method="post" action="/boq/upload" enctype="multipart/form-data" class="row" style="align-items:end; gap:8px;">
+          <input type="hidden" name="project_id" value="{{ project_id }}" />
+          <label style="margin:0;">Upload filled Excel</label>
+          <input type="file" name="file" accept=".xlsx,.xls" style="margin:0; width:200px;" />
+          <button type="submit" class="btn">Upload</button>
+        </form>
+      {% endif %}
       {% if not mask_prices %}
         <div class="pill">Budget: <strong>{{ money(project_budget) }}</strong></div>
         <div class="pill">Roll-up Est: <strong>{{ money(costs.estimated_cost) }}</strong></div>
@@ -29,6 +38,10 @@
         <div class="pill">Prices hidden for Field Manager</div>
       {% endif %}
     </form>
+    {% if request.query_params.get("uploaded") %}
+      <div class="alert" style="margin-top:10px; border-color: rgba(57,217,138,.45); background: rgba(57,217,138,.12);">Uploaded {{ request.query_params.get("uploaded") }} BOQ line(s) successfully.</div>
+    {% endif %}
+    <div class="hint" style="margin-top:8px;">Download template, fill WBS_Path (from your WBS) and materials, then Upload. Add WBS tasks first if needed.</div>
   </div>
 
   {% if request.query_params.get("error") %}
