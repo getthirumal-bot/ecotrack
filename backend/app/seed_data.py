@@ -317,8 +317,8 @@ def _ensure_material_master(session: Session) -> None:
 
 def seed_demo_projects(session: Session) -> int:
     """
-    Ensure 10 rich projects exist with full WBS, BOQ, defects.
-    Creates by name; if project exists but has minimal WBS (< 5 items), backfills full data.
+    Create the 10 demo projects with full WBS, BOQ, defects only when they do not exist.
+    Never deletes or overwrites existing project data (avoids wiping UI-created data on deploy/login).
     Returns number of projects created.
     """
     _ensure_material_master(session)
@@ -331,54 +331,31 @@ def seed_demo_projects(session: Session) -> int:
     super_id = supervisor_user.id if supervisor_user else None
 
     existing_by_name = {p.name: p for p in session.exec(select(Project)).all()}
-    wbs_count_by_project: Dict[str, int] = {}
-    for w in session.exec(select(WbsItem)).all():
-        wbs_count_by_project[w.project_id] = wbs_count_by_project.get(w.project_id, 0) + 1
 
     created = 0
     for pdef in PROJECTS:
         name = pdef["name"]
-        p = existing_by_name.get(name)
-        if p is None:
-            p = Project(
-                name=name,
-                description=pdef["description"],
-                budget=float(pdef["budget"]),
-                status=pdef["status"],
-                created_by_user_id=owner_id,
-                summary_what_completed=pdef.get("summary_what_completed", ""),
-                summary_where_we_stand=pdef.get("summary_where_we_stand", ""),
-                summary_pain_points=pdef.get("summary_pain_points", ""),
-                summary_where_heading=pdef.get("summary_where_heading", ""),
-                created_at=_now(),
-                updated_at=_now(),
-            )
-            session.add(p)
-            session.flush()
-            existing_by_name[name] = p
-            _add_wbs_boq_defects(session, p, owner_id=owner_id, field_id=field_id, super_id=super_id)
-            created += 1
-        else:
-            # Backfill: replace minimal WBS/BOQ/defects with full set
-            count = wbs_count_by_project.get(p.id, 0)
-            if count < 5:
-                # Remove existing WBS, BOQ, defects for this project so we replace with full set
-                for w in session.exec(select(WbsItem).where(WbsItem.project_id == p.id)).all():
-                    session.delete(w)
-                for b in session.exec(select(BoqItem).where(BoqItem.project_id == p.id)).all():
-                    session.delete(b)
-                for d in session.exec(select(Defect).where(Defect.project_id == p.id)).all():
-                    session.delete(d)
-                session.flush()
-                _add_wbs_boq_defects(session, p, owner_id=owner_id, field_id=field_id, super_id=super_id)
-                p.summary_what_completed = pdef.get("summary_what_completed", p.summary_what_completed)
-                p.summary_where_we_stand = pdef.get("summary_where_we_stand", p.summary_where_we_stand)
-                p.summary_pain_points = pdef.get("summary_pain_points", p.summary_pain_points)
-                p.summary_where_heading = pdef.get("summary_where_heading", p.summary_where_heading)
-                p.description = pdef.get("description", p.description)
-                p.budget = float(pdef.get("budget", p.budget))
-                p.status = pdef.get("status", p.status)
-                session.add(p)
+        if name in existing_by_name:
+            # Project already exists (user-created or from previous seed). Do not touch it.
+            continue
+        p = Project(
+            name=name,
+            description=pdef["description"],
+            budget=float(pdef["budget"]),
+            status=pdef["status"],
+            created_by_user_id=owner_id,
+            summary_what_completed=pdef.get("summary_what_completed", ""),
+            summary_where_we_stand=pdef.get("summary_where_we_stand", ""),
+            summary_pain_points=pdef.get("summary_pain_points", ""),
+            summary_where_heading=pdef.get("summary_where_heading", ""),
+            created_at=_now(),
+            updated_at=_now(),
+        )
+        session.add(p)
+        session.flush()
+        existing_by_name[name] = p
+        _add_wbs_boq_defects(session, p, owner_id=owner_id, field_id=field_id, super_id=super_id)
+        created += 1
 
     session.commit()
     return created

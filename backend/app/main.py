@@ -380,8 +380,9 @@ def seed_if_empty(session: Session) -> None:
         for u in users:
             session.add(u)
         session.commit()
-    # Always ensure 10 rich demo projects exist (creates only missing by name)
-    seed_demo_projects(session)
+    # Only add 10 demo projects when there are no projects (first-time setup). Never overwrite UI-created data.
+    if session.exec(select(Project)).first() is None:
+        seed_demo_projects(session)
 
 
 @app.get("/seed", response_class=HTMLResponse)
