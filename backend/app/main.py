@@ -697,7 +697,7 @@ def dashboard(
     user: User = Depends(require_roles(Role.architect, Role.project_owner)),
     session: Session = Depends(get_session),
 ):
-    """Project Dashboard: implementation projects only. Maintenance projects are not included."""
+    """Implementation projects: implementation projects only. Maintenance projects are not included."""
     projects = session.exec(
         select(Project).where(Project.project_type == "implementation").order_by(Project.created_at.desc())
     ).all()
@@ -750,7 +750,7 @@ def dashboard(
             "total_variance": total_budget - total_actual,
             "at_glance": at_glance,
             "budget_allocation": budget_allocation,
-            "dashboard_title": "Project Dashboard",
+            "dashboard_title": "Implementation projects",
             "dashboard_subtitle": "Implementation projects · at a glance, then portfolio heat map.",
             "dashboard_go_link": "/projects",
             "dashboard_go_label": "Go to Projects",
@@ -766,7 +766,7 @@ def maintenance_dashboard(
     user: User = Depends(require_roles(Role.architect, Role.project_owner)),
     session: Session = Depends(get_session),
 ):
-    """Maintenance Dashboard: same look and feel as Project Dashboard, maintenance projects only."""
+    """Maintenance projects: same look and feel as Implementation projects dashboard, maintenance projects only."""
     maintenance_projects = session.exec(
         select(Project).where(Project.project_type == "maintenance").order_by(Project.name.asc())
     ).all()
@@ -818,7 +818,7 @@ def maintenance_dashboard(
             "total_variance": total_budget - total_actual,
             "at_glance": at_glance,
             "budget_allocation": budget_allocation,
-            "dashboard_title": "Maintenance Dashboard",
+            "dashboard_title": "Maintenance projects",
             "dashboard_subtitle": "Maintenance projects · at a glance, then portfolio heat map.",
             "dashboard_go_link": "/maintenance/plans",
             "dashboard_go_label": "Go to maintenance plans",
