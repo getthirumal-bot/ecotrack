@@ -634,9 +634,8 @@ def _dashboard_at_a_glance(session: Session, project_ids: Optional[List[str]] = 
     if project_ids is not None:
         boq_stmt = boq_stmt.where(BoqItem.project_id.in_(project_ids))
     pending_boq = session.exec(boq_stmt).all()
+    # MaterialMaster has no project_id (global catalog); only filter other tables by project_ids
     mat_stmt = select(MaterialMaster).where(MaterialMaster.pending_approval == True)
-    if project_ids is not None:
-        mat_stmt = mat_stmt.where(MaterialMaster.project_id.in_(project_ids))
     pending_materials = session.exec(mat_stmt).all()
     pending_approvals = len(pending_wbs) + len(pending_defects_approval) + len(pending_boq) + len(pending_materials)
     all_wbs_stmt = select(WbsItem)
