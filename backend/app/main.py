@@ -1467,6 +1467,60 @@ def wbs_update_full(
     return RedirectResponse(url, status_code=303)
 
 
+def _wbs_subtree_ids_leaf_first(session: Session, project_id: str, root_id: str) -> List[str]:
+    """Collect WBS item id and all descendant ids in leaf-first order (for cascade delete)."""
+    items = session.exec(select(WbsItem).where(WbsItem.project_id == project_id)).all()
+    by_parent: Dict[Optional[str], List[WbsItem]] = {}
+    for w in items:
+        by_parent.setdefault(w.parent_id, []).append(w)
+    result: List[str] = []
+
+    def collect(parent_id: Optional[str]) -> None:
+        for w in by_parent.get(parent_id, []):
+            collect(w.id)
+            result.append(w.id)
+
+    root = session.exec(select(WbsItem).where(WbsItem.id == root_id, WbsItem.project_id == project_id)).first()
+    if not root:
+        return []
+    collect(root_id)
+    result.append(root_id)
+    return result
+
+
+@app.post("/wbs/{item_id}/delete")
+def wbs_delete(
+    item_id: str,
+    project_id: str = Form(...),
+    open_ids: str = Form(""),
+    user: User = Depends(require_roles(Role.architect, Role.project_owner)),
+    session: Session = Depends(get_session),
+):
+    """Architect and Project Owner only: delete WBS item and all descendants; unlink BOQ/Defect references."""
+    item = session.exec(select(WbsItem).where(WbsItem.id == item_id)).first()
+    if not item:
+        raise HTTPException(404, "WBS item not found")
+    if item.project_id != (project_id or "").strip():
+        raise HTTPException(400, "WBS item does not belong to this project")
+    ids_to_delete = _wbs_subtree_ids_leaf_first(session, item.project_id, item_id)
+    for wid in ids_to_delete:
+        for boq in session.exec(select(BoqItem).where(BoqItem.wbs_item_id == wid)).all():
+            boq.wbs_item_id = None
+            session.add(boq)
+        for defect in session.exec(select(Defect).where(Defect.wbs_item_id == wid)).all():
+            defect.wbs_item_id = None
+            session.add(defect)
+    for wid in ids_to_delete:
+        w = session.exec(select(WbsItem).where(WbsItem.id == wid)).first()
+        if w:
+            session.delete(w)
+    session.commit()
+    url = f"/wbs?project_id={project_id}"
+    if (open_ids or "").strip():
+        url += f"&open={quote((open_ids or '').strip())}"
+    return RedirectResponse(url, status_code=303)
+
+
 def _wbs_excel_instructions() -> List[str]:
     return [
         "WBS UPLOAD TEMPLATE - INSTRUCTIONS",

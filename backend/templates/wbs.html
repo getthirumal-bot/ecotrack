@@ -154,6 +154,11 @@
               <button type="submit" class="btn ghost wbs-save-btn">Save</button>
               <a class="btn ghost wbs-create-defect" href="/defects?project_id={{ project_id }}&wbs_item_id={{ node.item.id }}&location={{ node.item.name | urlencode }}" title="Create defect for this branch">Create defect</a>
             </form>
+            <form method="post" action="/wbs/{{ node.item.id }}/delete" class="wbs-delete-form" style="display:inline;">
+              <input type="hidden" name="project_id" value="{{ project_id }}" />
+              <input type="hidden" name="open_ids" value="" />
+              <button type="submit" class="btn ghost wbs-delete-btn" title="Delete this WBS item and its children" onclick="return confirm('Delete this WBS item and its children?');">Delete</button>
+            </form>
             {% else %}
             <span class="wbs-name"><strong>{{ node.item.name }}</strong></span>
             <span class="badge">{{ node.item.item_type }}</span>
@@ -213,8 +218,11 @@
     .wbs-toggle { margin-right: 4px; color: var(--muted); flex-shrink: 0; }
     .wbs-row-form, .wbs-status-only { display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 8px; margin-left: 8px; }
     .wbs-inline-input, .wbs-inline-select { margin: 0; padding: 4px 6px; }
-    .wbs-save-btn, .wbs-create-defect { flex-shrink: 0; padding: 4px 8px; }
-.wbs-create-defect { white-space: nowrap; }
+    .wbs-save-btn, .wbs-create-defect, .wbs-delete-btn { flex-shrink: 0; padding: 4px 8px; }
+    .wbs-create-defect { white-space: nowrap; }
+    .wbs-delete-form { margin-left: 4px; }
+    .wbs-delete-btn { color: var(--muted); }
+    .wbs-delete-btn:hover { color: #e57373; }
     .wbs-right { margin-left: auto; display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; flex-shrink: 0; }
     .wbs-dates, .wbs-owners { white-space: nowrap; }
     .wbs-actions { margin-left: 8px; }
