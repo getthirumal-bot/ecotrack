@@ -157,8 +157,41 @@
               <select name="secondary_owner_id" class="wbs-inline-select" style="min-width:100px;"><option value="">—</option>{% for u in users %}<option value="{{ u.id }}" {% if node.item.secondary_owner_id == u.id %}selected{% endif %}>{{ u.name }}</option>{% endfor %}</select>
               <span class="wbs-photos-inline" style="display:inline-flex; align-items:center; gap:8px;">
                 {% set item_photos = wbs_photos.get(node.item.id, {"before": none, "after": none}) %}
-                <span title="Before photo"><label class="muted" style="font-size:0.85em;">Before</label>{% if item_photos.before %}<a href="/wbs/photo/{{ item_photos.before.id }}" target="_blank" rel="noopener"><img src="/wbs/photo/{{ item_photos.before.id }}" alt="Before" style="height:28px; width:auto; max-width:48px; object-fit:contain; vertical-align:middle; border-radius:4px;" /></a>{% endif %}<input type="file" name="before_photo" accept="image/*" style="width:72px; font-size:0.8em;" /><span class="wbs-photo-selected" aria-live="polite"></span></span>
-                <span title="After photo"><label class="muted" style="font-size:0.85em;">After</label>{% if item_photos.after %}<a href="/wbs/photo/{{ item_photos.after.id }}" target="_blank" rel="noopener"><img src="/wbs/photo/{{ item_photos.after.id }}" alt="After" style="height:28px; width:auto; max-width:48px; object-fit:contain; vertical-align:middle; border-radius:4px;" /></a>{% endif %}<input type="file" name="after_photo" accept="image/*" style="width:72px; font-size:0.8em;" /><span class="wbs-photo-selected" aria-live="polite"></span></span>
+                {% set item_audios = wbs_audios.get(node.item.id, {"before": none, "after": none}) %}
+                <span class="wbs-media-block" title="Before media">
+                  <label class="muted" style="font-size:0.85em;">Before</label>
+                  {% if item_photos.before %}
+                    <a href="/wbs/photo/{{ item_photos.before.id }}" target="_blank" rel="noopener">
+                      <img src="/wbs/photo/{{ item_photos.before.id }}" alt="Before" style="height:28px; width:auto; max-width:48px; object-fit:contain; vertical-align:middle; border-radius:4px;" />
+                    </a>
+                  {% endif %}
+                  {% if item_audios.before %}
+                    <audio controls style="height:24px; vertical-align:middle;">
+                      <source src="/wbs/audio/{{ item_audios.before.id }}" type="{{ item_audios.before.content_type or 'audio/mpeg' }}" />
+                    </audio>
+                  {% endif %}
+                  <input id="before-photo-{{ node.item.id }}" type="file" name="before_photo" accept="image/*" capture="environment" class="wbs-photo-input" />
+                  <button type="button" class="btn ghost wbs-photo-btn" data-input-id="before-photo-{{ node.item.id }}">Photo</button>
+                  <span class="wbs-photo-selected" aria-live="polite"></span>
+                  <input type="file" name="before_audio" accept="audio/*" class="wbs-audio-input" />
+                </span>
+                <span class="wbs-media-block" title="After media">
+                  <label class="muted" style="font-size:0.85em;">After</label>
+                  {% if item_photos.after %}
+                    <a href="/wbs/photo/{{ item_photos.after.id }}" target="_blank" rel="noopener">
+                      <img src="/wbs/photo/{{ item_photos.after.id }}" alt="After" style="height:28px; width:auto; max-width:48px; object-fit:contain; vertical-align:middle; border-radius:4px;" />
+                    </a>
+                  {% endif %}
+                  {% if item_audios.after %}
+                    <audio controls style="height:24px; vertical-align:middle;">
+                      <source src="/wbs/audio/{{ item_audios.after.id }}" type="{{ item_audios.after.content_type or 'audio/mpeg' }}" />
+                    </audio>
+                  {% endif %}
+                  <input id="after-photo-{{ node.item.id }}" type="file" name="after_photo" accept="image/*" capture="environment" class="wbs-photo-input" />
+                  <button type="button" class="btn ghost wbs-photo-btn" data-input-id="after-photo-{{ node.item.id }}">Photo</button>
+                  <span class="wbs-photo-selected" aria-live="polite"></span>
+                  <input type="file" name="after_audio" accept="audio/*" class="wbs-audio-input" />
+                </span>
               </span>
               <button type="submit" class="btn ghost wbs-save-btn">Save</button>
               <a class="btn ghost wbs-create-defect" href="/defects?project_id={{ project_id }}&wbs_item_id={{ node.item.id }}&location={{ node.item.name | urlencode }}" title="Create defect for this branch">Create defect</a>
@@ -238,6 +271,9 @@
     .wbs-actions { margin-left: 8px; }
     .wbs-photo-selected { font-size: 0.8em; color: var(--muted); margin-left: 4px; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .wbs-photo-selected.has-file { color: rgba(57, 217, 138, 0.9); }
+    .wbs-media-block { display: inline-flex; align-items: center; gap: 4px; }
+    .wbs-photo-input { position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; }
+    .wbs-audio-input { font-size: 0.8em; width: 80px; }
   </style>
   <div id="wbs-open-ids" data-open="{{ request.query_params.get('open') or '' }}" style="display:none"></div>
   <script>
@@ -273,6 +309,13 @@
       if (parentSelect) parentSelect.addEventListener('change', updateWbsNewItemPath);
       if (nameInput) nameInput.addEventListener('input', updateWbsNewItemPath);
       updateWbsNewItemPath();
+      document.querySelectorAll('.wbs-photo-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var id = btn.getAttribute('data-input-id');
+          var inp = id && document.getElementById(id);
+          if (inp) inp.click();
+        });
+      });
       document.querySelectorAll('input[name="before_photo"], input[name="after_photo"]').forEach(function(inp) {
         inp.addEventListener('change', function() {
           var span = this.nextElementSibling;

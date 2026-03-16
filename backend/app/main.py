@@ -62,6 +62,7 @@ from .models import (
     User,
     UserLocation,
     UserProject,
+    WbsAudio,
     WbsItem,
     WbsItemType,
     WbsPhoto,
@@ -1499,11 +1500,15 @@ def wbs_page(
     wbs_tree = build_wbs_tree(items, users_by_id) if items else []
     wbs_parent_options = build_wbs_parent_options(wbs_tree) if wbs_tree else []
     wbs_photos: Dict[str, Dict[str, Optional[WbsPhoto]]] = {i.id: {"before": None, "after": None} for i in items}
+    wbs_audios: Dict[str, Dict[str, Optional[WbsAudio]]] = {i.id: {"before": None, "after": None} for i in items}
     if items:
         item_ids = [i.id for i in items]
         for p in session.exec(select(WbsPhoto).where(WbsPhoto.wbs_item_id.in_(item_ids))).all():
             if p.wbs_item_id in wbs_photos and p.phase in ("before", "after"):
                 wbs_photos[p.wbs_item_id][p.phase] = p
+        for a in session.exec(select(WbsAudio).where(WbsAudio.wbs_item_id.in_(item_ids))).all():
+            if a.wbs_item_id in wbs_audios and a.phase in ("before", "after"):
+                wbs_audios[a.wbs_item_id][a.phase] = a
     ctx = ui_context(session, user)
     ctx.update({
         "request": request,
@@ -1513,6 +1518,7 @@ def wbs_page(
         "wbs_tree": wbs_tree,
         "wbs_parent_options": wbs_parent_options,
         "wbs_photos": wbs_photos,
+        "wbs_audios": wbs_audios,
         "users": users,
     })
     return templates.TemplateResponse("wbs.html", ctx)
@@ -1603,10 +1609,12 @@ async def wbs_update_full(
     open_ids: str = Form(""),
     before_photo: Optional[UploadFile] = File(None),
     after_photo: Optional[UploadFile] = File(None),
+    before_audio: Optional[UploadFile] = File(None),
+    after_audio: Optional[UploadFile] = File(None),
     user: User = Depends(require_roles(Role.architect, Role.project_owner)),
     session: Session = Depends(get_session),
 ):
-    """Architect and Project Owner only: full inline edit (dates, resources, weight, name, type, status) and optional before/after photos."""
+    """Architect and Project Owner only: full inline edit (dates, resources, weight, name, type, status) and optional before/after photos and audio notes."""
     item = session.exec(select(WbsItem).where(WbsItem.id == item_id)).first()
     if not item:
         raise HTTPException(404, "WBS item not found")
@@ -1642,6 +1650,20 @@ async def wbs_update_full(
                 session.delete(ex)
             session.add(WbsPhoto(wbs_item_id=item_id, phase="after", filename=after_photo.filename or "after", content_type=after_photo.content_type or "image/jpeg", content_base64=base64.b64encode(raw).decode("ascii")))
             session.commit()
+    if before_audio and getattr(before_audio, "filename", None):
+        raw = await before_audio.read()
+        if raw and len(raw) <= 10 * 1024 * 1024 and (getattr(before_audio, "content_type") or "").startswith("audio/"):
+            for ex in session.exec(select(WbsAudio).where(WbsAudio.wbs_item_id == item_id, WbsAudio.phase == "before")).all():
+                session.delete(ex)
+            session.add(WbsAudio(wbs_item_id=item_id, phase="before", filename=before_audio.filename or "before-audio", content_type=before_audio.content_type or "audio/mpeg", content_base64=base64.b64encode(raw).decode("ascii")))
+            session.commit()
+    if after_audio and getattr(after_audio, "filename", None):
+        raw = await after_audio.read()
+        if raw and len(raw) <= 10 * 1024 * 1024 and (getattr(after_audio, "content_type") or "").startswith("audio/"):
+            for ex in session.exec(select(WbsAudio).where(WbsAudio.wbs_item_id == item_id, WbsAudio.phase == "after")).all():
+                session.delete(ex)
+            session.add(WbsAudio(wbs_item_id=item_id, phase="after", filename=after_audio.filename or "after-audio", content_type=after_audio.content_type or "audio/mpeg", content_base64=base64.b64encode(raw).decode("ascii")))
+            session.commit()
     url = f"/wbs?project_id={project_id}"
     if (open_ids or "").strip():
         url += f"&open={quote((open_ids or '').strip())}"
@@ -1661,6 +1683,21 @@ def wbs_serve_photo(
     except Exception:
         raise HTTPException(404, "Invalid")
     return RawResponse(content=body, media_type=photo.content_type or "image/jpeg")
+
+
+@app.get("/wbs/audio/{audio_id}")
+def wbs_serve_audio(
+    audio_id: str,
+    session: Session = Depends(get_session),
+):
+    audio = session.exec(select(WbsAudio).where(WbsAudio.id == audio_id)).first()
+    if not audio or not audio.content_base64:
+        raise HTTPException(404, "Not found")
+    try:
+        body = base64.b64decode(audio.content_base64)
+    except Exception:
+        raise HTTPException(404, "Invalid")
+    return RawResponse(content=body, media_type=audio.content_type or "audio/mpeg")
 
 
 def _wbs_subtree_ids_leaf_first(session: Session, project_id: str, root_id: str) -> List[str]:
@@ -1708,6 +1745,8 @@ def wbs_delete(
             session.add(defect)
         for wbs_photo in session.exec(select(WbsPhoto).where(WbsPhoto.wbs_item_id == wid)).all():
             session.delete(wbs_photo)
+        for wbs_audio in session.exec(select(WbsAudio).where(WbsAudio.wbs_item_id == wid)).all():
+            session.delete(wbs_audio)
     for wid in ids_to_delete:
         w = session.exec(select(WbsItem).where(WbsItem.id == wid)).first()
         if w:
