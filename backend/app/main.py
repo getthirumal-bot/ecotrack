@@ -210,7 +210,7 @@ def build_wbs_tree(
         by_id[i.id] = i
         by_parent.setdefault(i.parent_id, []).append(i)
     for k in by_parent:
-        by_parent[k].sort(key=lambda x: (x.name, x.id))
+        by_parent[k].sort(key=lambda x: (getattr(x, "sort_order", 0) or 0, x.name, x.id))
 
     def node(item: WbsItem, path_so_far: str = "") -> Dict[str, Any]:
         full_path = f"{path_so_far} → {item.name}" if path_so_far else item.name
@@ -1941,6 +1941,7 @@ def parse_wbs_excel_and_load(session: Session, project_id: str, file_bytes: byte
     by_name = {u.name.strip(): u for u in users}
     path_to_id: Dict[str, str] = {}  # "Parent -> Child" -> id
     created = 0
+    sort_counter = 0
     for row in rows:
         if not row or len(row) < 2:
             continue
@@ -1982,11 +1983,13 @@ def parse_wbs_excel_and_load(session: Session, project_id: str, file_bytes: byte
             if u:
                 secondary_owner_id = u.id
         parent_id = path_to_id.get(parent_path) if parent_path else None
+        sort_counter += 1
         item = WbsItem(
             project_id=project_id,
             parent_id=parent_id,
             name=name,
             item_type=item_type,
+            sort_order=sort_counter,
             weight=weight,
             status=status,
             start_date=start_date or None,

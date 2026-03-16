@@ -139,6 +139,7 @@ class WbsItem(SQLModel, table=True):
 
     name: str
     item_type: WbsItemType = Field(index=True)
+    sort_order: int = Field(default=0, index=True)  # preserve Excel row order
     weight: float = 0.0  # percent relative to parent
     status: WbsStatus = Field(default=WbsStatus.pending, index=True)
 
