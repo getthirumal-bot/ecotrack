@@ -76,6 +76,30 @@ templates.env.globals["hasattr"] = hasattr  # so templates can use hasattr(obj, 
 app.mount("/static", StaticFiles(directory=os.path.join(_BASE_DIR, "static")), name="static")
 
 
+@app.middleware("http")
+async def https_redirect_and_hsts(request: Request, call_next):
+    """
+    In production behind a proxy (Railway/Render), always serve HTTPS:
+    - If the original request was HTTP, redirect to the HTTPS URL.
+    - If it was HTTPS, add HSTS so browsers remember to use HTTPS.
+    """
+    if _is_production_env():
+        proto = request.headers.get("x-forwarded-proto", "").lower()
+        host = request.headers.get("host", "")
+        # Redirect plain HTTP (as seen by the proxy) to HTTPS
+        if proto and proto != "https" and host:
+            url = request.url.replace(scheme="https")
+            return RedirectResponse(url=str(url))
+    response = await call_next(request)
+    if _is_production_env():
+        # Instruct browsers to always use HTTPS for this domain going forward.
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains; preload",
+        )
+    return response
+
+
 @app.exception_handler(HTTPException)
 def http_exception_handler(request: Request, exc: HTTPException):
     """When browser gets 401, redirect to login instead of showing JSON."""
@@ -532,7 +556,26 @@ def seed_chukapalli_tasks_alt(
 
 
 def _seed_fresh_impl(session: Session) -> str:
-    """Clear all data and repopulate with 10 projects and full supporting data."""
+    """
+    Clear all data and repopulate with 10 projects and full supporting data.
+
+    In production (Railway/Render/etc.), this endpoint is disabled to avoid
+    accidentally wiping UI-created data after deploys. It should only be used
+    in local/dev environments.
+    """
+    if _is_production_env():
+        # In production, never allow a full data wipe via HTTP endpoint.
+        # Return a simple HTML page explaining that it is disabled.
+        return (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<title>Seed Fresh Disabled</title></head><body>"
+            "<h1>Seed Fresh is disabled in production</h1>"
+            "<p>This endpoint would clear <strong>all</strong> projects and data. "
+            "For safety it is only available in local/dev environments.</p>"
+            "<p>Your existing projects remain untouched.</p>"
+            "<p><a href='/login'>Go to Login</a></p>"
+            "</body></html>"
+        )
     clear_all_data(session)
     seed_if_empty(session)
     return (
