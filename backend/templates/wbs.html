@@ -174,7 +174,13 @@
                   <input id="before-photo-{{ node.item.id }}" type="file" name="before_photo" accept="image/*" capture="environment" class="wbs-photo-input" />
                   <button type="button" class="btn ghost wbs-photo-btn" data-input-id="before-photo-{{ node.item.id }}">Photo</button>
                   <span class="wbs-photo-selected" aria-live="polite"></span>
-                  <input type="file" name="before_audio" accept="audio/*" class="wbs-audio-input" />
+                  <span class="wbs-audio-rec" data-phase="before" data-item-id="{{ node.item.id }}">
+                    <label class="muted" style="font-size:0.85em;">Record audio</label>
+                    <button type="button" class="btn ghost wbs-audio-rec-start">Record</button>
+                    <button type="button" class="btn ghost wbs-audio-rec-stop" disabled>Stop</button>
+                    <audio class="wbs-audio-preview" controls style="height:24px; vertical-align:middle; display:none;"></audio>
+                    <input type="file" name="before_audio" accept="audio/*" class="wbs-audio-input" />
+                  </span>
                 </span>
                 <span class="wbs-media-block" title="After media">
                   <label class="muted" style="font-size:0.85em;">After</label>
@@ -192,7 +198,13 @@
                   <input id="after-photo-{{ node.item.id }}" type="file" name="after_photo" accept="image/*" capture="environment" class="wbs-photo-input" />
                   <button type="button" class="btn ghost wbs-photo-btn" data-input-id="after-photo-{{ node.item.id }}">Photo</button>
                   <span class="wbs-photo-selected" aria-live="polite"></span>
-                  <input type="file" name="after_audio" accept="audio/*" class="wbs-audio-input" />
+                  <span class="wbs-audio-rec" data-phase="after" data-item-id="{{ node.item.id }}">
+                    <label class="muted" style="font-size:0.85em;">Record audio</label>
+                    <button type="button" class="btn ghost wbs-audio-rec-start">Record</button>
+                    <button type="button" class="btn ghost wbs-audio-rec-stop" disabled>Stop</button>
+                    <audio class="wbs-audio-preview" controls style="height:24px; vertical-align:middle; display:none;"></audio>
+                    <input type="file" name="after_audio" accept="audio/*" class="wbs-audio-input" />
+                  </span>
                 </span>
               </span>
               <button type="submit" class="btn ghost wbs-save-btn">Save</button>
@@ -276,6 +288,8 @@
     .wbs-media-block { display: inline-flex; align-items: center; gap: 4px; }
     .wbs-photo-input { position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; }
     .wbs-audio-input { font-size: 0.8em; width: 80px; }
+    .wbs-audio-rec { display: inline-flex; align-items: center; gap: 6px; }
+    .wbs-audio-rec-start, .wbs-audio-rec-stop { padding: 4px 8px; font-size: 0.8em; }
     #wbs-annotator-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.65); display: none; align-items: center; justify-content: center; z-index: 1000; }
     #wbs-annotator-modal { background: #111827; border-radius: 8px; padding: 16px; max-width: 900px; width: 100%; box-shadow: 0 10px 40px rgba(0,0,0,0.6); }
     #wbs-annotator-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -351,6 +365,89 @@
             span.classList.remove('has-file');
           }
         });
+      });
+
+      // WhatsApp-style audio recording (MediaRecorder)
+      var wbsAudioState = {}; // key: itemId|phase -> { stream, rec, chunks, blob, url }
+      function audioKey(itemId, phase) { return String(itemId || '') + '|' + String(phase || ''); }
+      function supportsRecording() {
+        return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+      }
+      document.querySelectorAll('.wbs-audio-rec').forEach(function(block) {
+        var itemId = block.getAttribute('data-item-id') || '';
+        var phase = block.getAttribute('data-phase') || '';
+        var startBtn = block.querySelector('.wbs-audio-rec-start');
+        var stopBtn = block.querySelector('.wbs-audio-rec-stop');
+        var preview = block.querySelector('.wbs-audio-preview');
+        var fileInput = block.querySelector('input[type=\"file\"]');
+        if (!startBtn || !stopBtn || !fileInput) return;
+        if (!supportsRecording()) {
+          startBtn.disabled = true;
+          startBtn.title = 'Recording not supported in this browser';
+          stopBtn.disabled = true;
+          return;
+        }
+        startBtn.addEventListener('click', async function() {
+          var k = audioKey(itemId, phase);
+          try {
+            if (wbsAudioState[k] && wbsAudioState[k].stream) {
+              try { wbsAudioState[k].stream.getTracks().forEach(function(t){ t.stop(); }); } catch(e) {}
+            }
+            var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            var mimeType = '';
+            if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+              mimeType = 'audio/webm;codecs=opus';
+            } else if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/webm')) {
+              mimeType = 'audio/webm';
+            }
+            var rec = new MediaRecorder(stream, mimeType ? { mimeType: mimeType } : undefined);
+            var chunks = [];
+            rec.ondataavailable = function(e) { if (e.data && e.data.size) chunks.push(e.data); };
+            rec.onstop = function() {
+              var ct = rec.mimeType || mimeType || 'audio/webm';
+              var blob = new Blob(chunks, { type: ct });
+              var url = URL.createObjectURL(blob);
+              wbsAudioState[k] = { stream: stream, rec: rec, chunks: chunks, blob: blob, url: url, contentType: ct };
+              if (preview) {
+                preview.src = url;
+                preview.style.display = 'inline-block';
+              }
+              try { stream.getTracks().forEach(function(t){ t.stop(); }); } catch(e) {}
+            };
+            wbsAudioState[k] = { stream: stream, rec: rec, chunks: chunks, blob: null, url: null, contentType: mimeType || '' };
+            rec.start();
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+          } catch (e) {
+            alert('Microphone permission is required to record audio.');
+          }
+        });
+        stopBtn.addEventListener('click', function() {
+          var k = audioKey(itemId, phase);
+          var st = wbsAudioState[k];
+          if (!st || !st.rec) return;
+          try { st.rec.stop(); } catch(e) {}
+          startBtn.disabled = false;
+          stopBtn.disabled = true;
+        });
+        // Attach recorded audio blob to form submit so backend receives it as before_audio/after_audio
+        var form = block.closest('form');
+        if (form) {
+          form.addEventListener('submit', function() {
+            var k = audioKey(itemId, phase);
+            var st = wbsAudioState[k];
+            if (!st || !st.blob) return;
+            var ext = (st.contentType || '').indexOf('webm') !== -1 ? 'webm' : 'dat';
+            var f = new File([st.blob], phase + '-audio.' + ext, { type: st.contentType || 'audio/webm' });
+            try {
+              var dt = new DataTransfer();
+              dt.items.add(f);
+              fileInput.files = dt.files;
+            } catch (e) {
+              // If DataTransfer isn't supported, the user can still use the file upload fallback.
+            }
+          });
+        }
       });
 
       // Simple photo annotator
