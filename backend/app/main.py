@@ -1685,6 +1685,41 @@ def wbs_serve_photo(
     return RawResponse(content=body, media_type=photo.content_type or "image/jpeg")
 
 
+@app.post("/wbs/photo/{photo_id}/annotate")
+def wbs_annotate_photo(
+    photo_id: str,
+    image_data: str = Form(...),
+    user: User = Depends(require_roles(Role.architect, Role.project_owner)),
+    session: Session = Depends(get_session),
+):
+    """Overwrite an existing WbsPhoto with an annotated PNG from the browser canvas."""
+    photo = session.exec(select(WbsPhoto).where(WbsPhoto.id == photo_id)).first()
+    if not photo:
+        raise HTTPException(404, "Photo not found")
+    # Ensure the user has access to this project's WBS item
+    wbs_item = session.exec(select(WbsItem).where(WbsItem.id == photo.wbs_item_id)).first()
+    if not wbs_item:
+        raise HTTPException(404, "WBS item not found for photo")
+    # Accept data URLs like \"data:image/png;base64,...\"
+    prefix = "base64,"
+    idx = image_data.find(prefix)
+    if idx != -1:
+        image_data = image_data[idx + len(prefix) :]
+    try:
+        raw = base64.b64decode(image_data)
+    except Exception:
+        raise HTTPException(400, "Invalid image data")
+    if not raw:
+        raise HTTPException(400, "Empty image data")
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(400, "Annotated image too large")
+    photo.content_base64 = base64.b64encode(raw).decode("ascii")
+    photo.content_type = "image/png"
+    session.add(photo)
+    session.commit()
+    return JSONResponse({"ok": True})
+
+
 @app.get("/wbs/audio/{audio_id}")
 def wbs_serve_audio(
     audio_id: str,

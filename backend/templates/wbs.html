@@ -162,8 +162,9 @@
                   <label class="muted" style="font-size:0.85em;">Before</label>
                   {% if item_photos.before %}
                     <a href="/wbs/photo/{{ item_photos.before.id }}" target="_blank" rel="noopener">
-                      <img src="/wbs/photo/{{ item_photos.before.id }}" alt="Before" style="height:28px; width:auto; max-width:48px; object-fit:contain; vertical-align:middle; border-radius:4px;" />
+                      <img src="/wbs/photo/{{ item_photos.before.id }}" alt="Before" style="height:28px; width:auto; max-width:48px; object-fit:contain; vertical-align:middle; border-radius:4px;" data-photo-id="{{ item_photos.before.id }}" />
                     </a>
+                    <button type="button" class="btn ghost wbs-photo-edit" data-photo-id="{{ item_photos.before.id }}" data-photo-url="/wbs/photo/{{ item_photos.before.id }}">Edit</button>
                   {% endif %}
                   {% if item_audios.before %}
                     <audio controls style="height:24px; vertical-align:middle;">
@@ -179,8 +180,9 @@
                   <label class="muted" style="font-size:0.85em;">After</label>
                   {% if item_photos.after %}
                     <a href="/wbs/photo/{{ item_photos.after.id }}" target="_blank" rel="noopener">
-                      <img src="/wbs/photo/{{ item_photos.after.id }}" alt="After" style="height:28px; width:auto; max-width:48px; object-fit:contain; vertical-align:middle; border-radius:4px;" />
+                      <img src="/wbs/photo/{{ item_photos.after.id }}" alt="After" style="height:28px; width:auto; max-width:48px; object-fit:contain; vertical-align:middle; border-radius:4px;" data-photo-id="{{ item_photos.after.id }}" />
                     </a>
+                    <button type="button" class="btn ghost wbs-photo-edit" data-photo-id="{{ item_photos.after.id }}" data-photo-url="/wbs/photo/{{ item_photos.after.id }}">Edit</button>
                   {% endif %}
                   {% if item_audios.after %}
                     <audio controls style="height:24px; vertical-align:middle;">
@@ -274,8 +276,28 @@
     .wbs-media-block { display: inline-flex; align-items: center; gap: 4px; }
     .wbs-photo-input { position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; }
     .wbs-audio-input { font-size: 0.8em; width: 80px; }
+    #wbs-annotator-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.65); display: none; align-items: center; justify-content: center; z-index: 1000; }
+    #wbs-annotator-modal { background: #111827; border-radius: 8px; padding: 16px; max-width: 900px; width: 100%; box-shadow: 0 10px 40px rgba(0,0,0,0.6); }
+    #wbs-annotator-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    #wbs-annotator-toolbar label { font-size: 0.85em; }
+    #wbs-annotator-canvas { max-width: 100%; border-radius: 4px; background: #000; cursor: crosshair; }
   </style>
   <div id="wbs-open-ids" data-open="{{ request.query_params.get('open') or '' }}" style="display:none"></div>
+  <div id="wbs-annotator-backdrop">
+    <div id="wbs-annotator-modal">
+      <div id="wbs-annotator-toolbar">
+        <strong style="flex:1;">Annotate photo</strong>
+        <label>Color <input type="color" id="wbs-annotator-color" value="#ff0000" /></label>
+        <label>Size <input type="range" id="wbs-annotator-size" min="2" max="16" value="4" /></label>
+        <button type="button" class="btn ghost" id="wbs-annotator-undo">Undo</button>
+        <button type="button" class="btn ghost" id="wbs-annotator-clear">Clear</button>
+        <button type="button" class="btn ghost" id="wbs-annotator-close">Close</button>
+        <button type="button" class="btn" id="wbs-annotator-save">Save</button>
+      </div>
+      <canvas id="wbs-annotator-canvas" width="800" height="600"></canvas>
+      <div class="muted" style="margin-top:8px; font-size:0.8em;">Saving will overwrite the existing photo for this phase.</div>
+    </div>
+  </div>
   <script>
     (function() {
       var openParam = (document.getElementById('wbs-open-ids') && document.getElementById('wbs-open-ids').getAttribute('data-open')) || '';
@@ -328,6 +350,175 @@
             span.textContent = '';
             span.classList.remove('has-file');
           }
+        });
+      });
+
+      // Simple photo annotator
+      var annotBackdrop = document.getElementById('wbs-annotator-backdrop');
+      var annotCanvas = document.getElementById('wbs-annotator-canvas');
+      var annotCtx = annotCanvas.getContext && annotCanvas.getContext('2d');
+      var annotColorInp = document.getElementById('wbs-annotator-color');
+      var annotSizeInp = document.getElementById('wbs-annotator-size');
+      var annotCloseBtn = document.getElementById('wbs-annotator-close');
+      var annotSaveBtn = document.getElementById('wbs-annotator-save');
+      var annotClearBtn = document.getElementById('wbs-annotator-clear');
+      var annotUndoBtn = document.getElementById('wbs-annotator-undo');
+      var annotCurrentPhotoId = null;
+      var annotBaseImage = null;
+      var annotDrawing = false;
+      var annotLastX = 0;
+      var annotLastY = 0;
+      var annotHistory = [];
+
+      function annotResizeCanvasToImage(img) {
+        var maxW = 800;
+        var maxH = 600;
+        var w = img.naturalWidth || img.width;
+        var h = img.naturalHeight || img.height;
+        var scale = Math.min(1, maxW / w, maxH / h);
+        annotCanvas.width = Math.round(w * scale);
+        annotCanvas.height = Math.round(h * scale);
+      }
+
+      function annotDrawBase() {
+        if (!annotCtx || !annotBaseImage) return;
+        annotCtx.clearRect(0, 0, annotCanvas.width, annotCanvas.height);
+        annotCtx.drawImage(annotBaseImage, 0, 0, annotCanvas.width, annotCanvas.height);
+      }
+
+      function annotOpen(photoId, url) {
+        if (!annotCtx) return;
+        annotCurrentPhotoId = photoId;
+        var img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = function() {
+          annotBaseImage = img;
+          annotResizeCanvasToImage(img);
+          annotHistory = [];
+          annotDrawBase();
+          annotBackdrop.style.display = 'flex';
+        };
+        img.onerror = function() {
+          alert('Could not load photo for annotation.');
+        };
+        img.src = url + '?t=' + Date.now();
+      }
+
+      function annotStartDraw(x, y) {
+        annotDrawing = true;
+        annotLastX = x;
+        annotLastY = y;
+        // push current state for undo
+        try {
+          annotHistory.push(annotCanvas.toDataURL('image/png'));
+          if (annotHistory.length > 10) annotHistory.shift();
+        } catch (e) {}
+      }
+
+      function annotMoveDraw(x, y) {
+        if (!annotDrawing || !annotCtx) return;
+        annotCtx.strokeStyle = annotColorInp ? annotColorInp.value : '#ff0000';
+        var size = annotSizeInp ? parseInt(annotSizeInp.value || '4', 10) : 4;
+        annotCtx.lineWidth = size;
+        annotCtx.lineCap = 'round';
+        annotCtx.beginPath();
+        annotCtx.moveTo(annotLastX, annotLastY);
+        annotCtx.lineTo(x, y);
+        annotCtx.stroke();
+        annotLastX = x;
+        annotLastY = y;
+      }
+
+      function annotEndDraw() {
+        annotDrawing = false;
+      }
+
+      if (annotCanvas && annotCtx) {
+        annotCanvas.addEventListener('mousedown', function(e) {
+          var rect = annotCanvas.getBoundingClientRect();
+          annotStartDraw(e.clientX - rect.left, e.clientY - rect.top);
+        });
+        annotCanvas.addEventListener('mousemove', function(e) {
+          var rect = annotCanvas.getBoundingClientRect();
+          annotMoveDraw(e.clientX - rect.left, e.clientY - rect.top);
+        });
+        document.addEventListener('mouseup', annotEndDraw);
+        // touch support
+        annotCanvas.addEventListener('touchstart', function(e) {
+          var t = e.touches[0];
+          var rect = annotCanvas.getBoundingClientRect();
+          annotStartDraw(t.clientX - rect.left, t.clientY - rect.top);
+          e.preventDefault();
+        }, { passive: false });
+        annotCanvas.addEventListener('touchmove', function(e) {
+          var t = e.touches[0];
+          var rect = annotCanvas.getBoundingClientRect();
+          annotMoveDraw(t.clientX - rect.left, t.clientY - rect.top);
+          e.preventDefault();
+        }, { passive: false });
+        document.addEventListener('touchend', annotEndDraw);
+      }
+
+      if (annotCloseBtn) {
+        annotCloseBtn.addEventListener('click', function() {
+          annotBackdrop.style.display = 'none';
+        });
+      }
+      if (annotClearBtn) {
+        annotClearBtn.addEventListener('click', function() {
+          annotDrawBase();
+        });
+      }
+      if (annotUndoBtn) {
+        annotUndoBtn.addEventListener('click', function() {
+          if (!annotHistory.length || !annotCtx) return;
+          var dataUrl = annotHistory.pop();
+          var img = new Image();
+          img.onload = function() {
+            annotResizeCanvasToImage(img);
+            annotCtx.clearRect(0, 0, annotCanvas.width, annotCanvas.height);
+            annotCtx.drawImage(img, 0, 0, annotCanvas.width, annotCanvas.height);
+          };
+          img.src = dataUrl;
+        });
+      }
+      if (annotSaveBtn) {
+        annotSaveBtn.addEventListener('click', function() {
+          if (!annotCurrentPhotoId || !annotCanvas) return;
+          var dataUrl;
+          try {
+            dataUrl = annotCanvas.toDataURL('image/png');
+          } catch (e) {
+            alert('Could not capture annotation.');
+            return;
+          }
+          var fd = new FormData();
+          fd.append('image_data', dataUrl);
+          fetch('/wbs/photo/' + encodeURIComponent(annotCurrentPhotoId) + '/annotate', {
+            method: 'POST',
+            body: fd,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+          }).then(function(resp) {
+            if (!resp.ok) throw new Error('Save failed');
+            return resp.json();
+          }).then(function() {
+            annotBackdrop.style.display = 'none';
+            // Refresh any thumbnails for this photo id
+            document.querySelectorAll('img[data-photo-id=\"' + annotCurrentPhotoId + '\"]').forEach(function(img) {
+              var url = img.getAttribute('src') || '';
+              var base = url.split('?')[0];
+              img.setAttribute('src', base + '?t=' + Date.now());
+            });
+          }).catch(function() {
+            alert('Could not save annotation.');
+          });
+        });
+      }
+      document.querySelectorAll('.wbs-photo-edit').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var pid = btn.getAttribute('data-photo-id');
+          var url = btn.getAttribute('data-photo-url');
+          if (pid && url) annotOpen(pid, url);
         });
       });
     })();
