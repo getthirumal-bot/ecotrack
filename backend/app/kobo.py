@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from openpyxl import Workbook
+from urllib.parse import urlencode
 
 
 class KoboError(RuntimeError):
@@ -29,6 +30,21 @@ class KoboConfig:
         if not token:
             raise KoboError("KOBO_API_TOKEN is not set")
         return KoboConfig(base_url=base_url, token=token)
+
+
+def kobo_prefilled_enketo_link(*, cfg: KoboConfig, asset_uid: str, ecotrack_project_id: str, ecotrack_wbs_id: str) -> str:
+    """
+    Build a prefilled Enketo link for a new submission.
+    Kobo supports prefill via query params matching question names.
+    """
+    base = f"{cfg.base_url}/#/forms/{asset_uid}/enketo"
+    qs = urlencode(
+        {
+            "ecotrack_project_id": ecotrack_project_id,
+            "ecotrack_wbs_id": ecotrack_wbs_id,
+        }
+    )
+    return f"{base}?{qs}"
 
 
 def _auth_headers(token: str) -> Dict[str, str]:

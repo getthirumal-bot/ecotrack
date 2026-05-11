@@ -43,10 +43,12 @@ def _debug_log(location: str, message: str, data: dict, hypothesis_id: str, run_
 # #endregion
 from .notifications import send_activity_reminders as notify_activity_reminders
 from .notifications import send_defect_reminders as notify_defect_reminders
+from .notifications import send_kobo_activity_links as notify_kobo_activity_links
 from .seed_data import seed_demo_projects
 from .kobo import (
     KoboConfig,
     KoboError,
+    kobo_prefilled_enketo_link,
     kobo_deploy_form,
     kobo_download_attachment_base64,
     kobo_extract_created_asset_uid,
@@ -1820,6 +1822,88 @@ def project_send_activity_reminders(
     notify_activity_reminders(list(users), p.name, activity_date, task_summary)
     return RedirectResponse(
         f"/projects/{project_id}?sent_activity=1&count={len(users)}&date={activity_date}",
+        status_code=303,
+    )
+
+
+@app.post("/projects/{project_id}/push-activities-to-kobo")
+def project_push_activities_to_kobo(
+    request: Request,
+    project_id: str,
+    activity_date: str = Form(...),
+    user: User = Depends(require_roles(Role.architect, Role.project_owner)),
+    session: Session = Depends(get_session),
+):
+    """
+    PM: push selected activities to Kobo by emailing/WhatsApp'ing prefilled Kobo links to assignees.
+    """
+    p = session.exec(select(Project).where(Project.id == project_id)).first()
+    if not p:
+        raise HTTPException(404, "Project not found")
+
+    asset_uid = _kobo_asset_uid(session)
+    if not asset_uid:
+        return RedirectResponse(
+            f"/projects/{project_id}?error=" + quote("Kobo not configured. Go to /integrations and set the Kobo Asset UID."),
+            status_code=303,
+        )
+
+    try:
+        cfg = KoboConfig.from_env()
+    except KoboError as e:
+        return RedirectResponse(f"/projects/{project_id}?error=" + quote(str(e)), status_code=303)
+
+    activity_date = (activity_date or "").strip()[:10]
+    form_data = request.form()
+    selected_wbs_ids = set(form_data.getlist("selected_wbs_ids"))
+    if not selected_wbs_ids:
+        return RedirectResponse(f"/projects/{project_id}?error=" + quote("Please select at least one activity"), status_code=303)
+
+    items = session.exec(
+        select(WbsItem).where(
+            WbsItem.project_id == project_id,
+            WbsItem.id.in_(selected_wbs_ids),
+        )
+    ).all()
+
+    # Map activity to recipients and build per-user link list
+    owner_ids = set()
+    for item in items:
+        if item.primary_owner_id:
+            owner_ids.add(item.primary_owner_id)
+        if item.secondary_owner_id:
+            owner_ids.add(item.secondary_owner_id)
+
+    if not owner_ids:
+        return RedirectResponse(
+            f"/projects/{project_id}?msg=" + quote("No assignees found for selected activities"),
+            status_code=303,
+        )
+
+    users = session.exec(select(User).where(User.id.in_(list(owner_ids)))).all()
+    users_by_id = {u.id: u for u in users}
+
+    links_by_email: Dict[str, List[Tuple[str, str]]] = {}
+    for item in items:
+        link = kobo_prefilled_enketo_link(
+            cfg=cfg,
+            asset_uid=asset_uid,
+            ecotrack_project_id=p.id,
+            ecotrack_wbs_id=item.id,
+        )
+        for uid in [item.primary_owner_id, item.secondary_owner_id]:
+            if not uid or uid not in users_by_id:
+                continue
+            u = users_by_id[uid]
+            if not u.email:
+                continue
+            links_by_email.setdefault(u.email, []).append((item.name, link))
+
+    notify_kobo_activity_links(users=users, project_name=p.name, activity_date=activity_date, links_by_user_email=links_by_email)
+
+    sent_count = sum(1 for u in users if u.email in links_by_email and links_by_email[u.email])
+    return RedirectResponse(
+        f"/projects/{project_id}?sent_kobo=1&count={sent_count}&date={activity_date}",
         status_code=303,
     )
 

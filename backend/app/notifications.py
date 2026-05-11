@@ -102,3 +102,41 @@ def send_defect_reminders(
         if u.whatsapp_phone and u.whatsapp_phone not in seen_phones:
             send_whatsapp(u.whatsapp_phone, f"Ecotrack: Defect reminders — {project_name}\n\n{defect_summary[:200]}")
             seen_phones.add(u.whatsapp_phone)
+
+
+def send_kobo_activity_links(
+    *,
+    users: List["User"],
+    project_name: str,
+    activity_date: str,
+    links_by_user_email: dict,
+) -> None:
+    """
+    Send Kobo prefilled submission links to assignees.
+    links_by_user_email: { email: [(task_name, url), ...] }
+    """
+    subject = f"Ecotrack → Kobo: Field updates for {activity_date} — {project_name}"
+    seen_emails = set()
+    seen_phones = set()
+    for u in users:
+        items = links_by_user_email.get(u.email or "") or []
+        if not items:
+            continue
+        body_lines = [f"Project: {project_name}", f"Date: {activity_date}", "", "Open each task link and submit proof (GPS/photo/audio):", ""]
+        for name, url in items:
+            body_lines.append(f"- {name}\n  {url}")
+        body_lines.append("\n— Ecotrack")
+        body = "\n".join(body_lines)
+
+        if u.email and u.email not in seen_emails:
+            send_email(u.email, subject, body)
+            seen_emails.add(u.email)
+
+        # WhatsApp is short: send only first few links
+        if u.whatsapp_phone and u.whatsapp_phone not in seen_phones:
+            short = "\n".join([f"- {name}: {url}" for name, url in items[:3]])
+            send_whatsapp(
+                u.whatsapp_phone,
+                f"Ecotrack → Kobo: {project_name} ({activity_date})\nOpen link(s) and submit proof:\n{short}",
+            )
+            seen_phones.add(u.whatsapp_phone)
