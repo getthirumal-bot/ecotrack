@@ -54,7 +54,12 @@ def _auth_headers(token: str) -> Dict[str, str]:
     }
 
 
-def _xlsx_bytes_for_ecotrack_field_updates_form() -> bytes:
+def _xlsx_bytes_for_ecotrack_field_updates_form(
+    *,
+    form_title: str,
+    form_id: str,
+    task_choices: List[Tuple[str, str]],
+) -> bytes:
     """
     Build a simple XLSForm (as .xlsx) for Kobo:
     - hidden Ecotrack ids (project_id, wbs_id)
@@ -71,9 +76,9 @@ def _xlsx_bytes_for_ecotrack_field_updates_form() -> bytes:
 
     ws_survey.append(["type", "name", "label", "required", "appearance"])
 
-    # Hidden mapping fields (prefilled from Ecotrack link)
-    ws_survey.append(["text", "ecotrack_project_id", "Ecotrack Project ID", "yes", "hidden"])
-    ws_survey.append(["text", "ecotrack_wbs_id", "Ecotrack WBS/Task ID", "yes", "hidden"])
+    # Project id stays hidden (prefilled when needed), while task is selected from pushed list
+    ws_survey.append(["text", "ecotrack_project_id", "Ecotrack Project ID", "no", "hidden"])
+    ws_survey.append(["select_one ecotrack_tasks", "ecotrack_wbs_id", "Select activity", "yes", ""])
 
     # Who / when - Kobo already stores metadata, but keep a visible field for convenience
     ws_survey.append(["text", "submitted_by", "Your name / email (optional)", "no", ""])
@@ -91,6 +96,8 @@ def _xlsx_bytes_for_ecotrack_field_updates_form() -> bytes:
     ws_survey.append(["text", "remarks", "Remarks (optional)", "no", ""])
 
     ws_choices.append(["list_name", "name", "label"])
+    for wbs_id, label in task_choices:
+        ws_choices.append(["ecotrack_tasks", wbs_id, label])
     ws_choices.append(["before_after", "before", "Before"])
     ws_choices.append(["before_after", "after", "After"])
 
@@ -99,23 +106,26 @@ def _xlsx_bytes_for_ecotrack_field_updates_form() -> bytes:
     ws_choices.append(["wbs_status", "completed", "Completed"])
 
     ws_settings.append(["form_title", "form_id"])
-    ws_settings.append(["Ecotrack Field Updates (v1)", "ecotrack_field_updates_v1"])
+    ws_settings.append([form_title, form_id])
 
     bio = io.BytesIO()
     wb.save(bio)
     return bio.getvalue()
 
 
-def kobo_import_xlsform(*, cfg: KoboConfig) -> str:
+def kobo_import_xlsform(*, cfg: KoboConfig, form_title: str, form_id: str, task_choices: List[Tuple[str, str]], asset_uid: Optional[str] = None) -> str:
     """
     Upload an XLSForm to Kobo and return the import uid.
     Uses the /api/v2/imports/ endpoint (multipart).
     """
-    xlsx = _xlsx_bytes_for_ecotrack_field_updates_form()
+    xlsx = _xlsx_bytes_for_ecotrack_field_updates_form(form_title=form_title, form_id=form_id, task_choices=task_choices)
     files = {
         "file": ("ecotrack_field_updates_v1.xlsx", xlsx, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     }
     data = {"library": "false"}
+    if asset_uid:
+        # Attempt to replace/update existing asset (server supports this in practice even if schema is sparse)
+        data["assetUid"] = asset_uid
     url = f"{cfg.base_url}/api/v2/imports/"
     with httpx.Client(timeout=60.0) as client:
         r = client.post(url, headers=_auth_headers(cfg.token), data=data, files=files)
@@ -126,6 +136,34 @@ def kobo_import_xlsform(*, cfg: KoboConfig) -> str:
         if not uid:
             raise KoboError(f"Import did not return uid: {payload}")
         return uid
+
+
+def kobo_create_or_update_user_form(
+    *,
+    cfg: KoboConfig,
+    existing_asset_uid: Optional[str],
+    user_email: str,
+    task_choices: List[Tuple[str, str]],
+) -> str:
+    """
+    Create (or update) a per-user Kobo form that contains only that user's tasks.
+    Returns the asset UID (existing or newly created).
+    """
+    safe = (user_email or "user").lower().replace("@", "_at_").replace(".", "_")
+    form_title = f"Ecotrack Field Updates ({user_email})"
+    form_id = f"ecotrack_field_updates_{safe}"
+    import_uid = kobo_import_xlsform(
+        cfg=cfg,
+        form_title=form_title,
+        form_id=form_id,
+        task_choices=task_choices,
+        asset_uid=existing_asset_uid,
+    )
+    payload = kobo_wait_import(cfg=cfg, import_uid=import_uid, timeout_s=180)
+    # If server updated existing asset, it may show under "updated", otherwise "created"
+    asset_uid = kobo_extract_created_asset_uid(payload)
+    kobo_deploy_form(cfg=cfg, asset_uid=asset_uid)
+    return asset_uid
 
 
 def kobo_wait_import(*, cfg: KoboConfig, import_uid: str, timeout_s: int = 90) -> Dict[str, Any]:

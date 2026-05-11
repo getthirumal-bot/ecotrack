@@ -48,7 +48,7 @@ from .seed_data import seed_demo_projects
 from .kobo import (
     KoboConfig,
     KoboError,
-    kobo_prefilled_enketo_link,
+    kobo_create_or_update_user_form,
     kobo_deploy_form,
     kobo_download_attachment_base64,
     kobo_extract_created_asset_uid,
@@ -1835,14 +1835,16 @@ def project_push_activities_to_kobo(
     session: Session = Depends(get_session),
 ):
     """
-    PM: push selected activities to Kobo by emailing/WhatsApp'ing prefilled Kobo links to assignees.
+    PM: push selected activities into Kobo.
+    For each assignee, create/update a per-user Kobo form that contains only their selected activities.
+    Field staff login to Kobo and use their form to submit updates (GPS/photo/audio/video).
     """
     p = session.exec(select(Project).where(Project.id == project_id)).first()
     if not p:
         raise HTTPException(404, "Project not found")
 
-    asset_uid = _kobo_asset_uid(session)
-    if not asset_uid:
+    base_asset_uid = _kobo_asset_uid(session)
+    if not base_asset_uid:
         return RedirectResponse(
             f"/projects/{project_id}?error=" + quote("Kobo not configured. Go to /integrations and set the Kobo Asset UID."),
             status_code=303,
@@ -1866,7 +1868,7 @@ def project_push_activities_to_kobo(
         )
     ).all()
 
-    # Map activity to recipients and build per-user link list
+    # Map activity to recipients and build per-user task list
     owner_ids = set()
     for item in items:
         if item.primary_owner_id:
@@ -1883,25 +1885,59 @@ def project_push_activities_to_kobo(
     users = session.exec(select(User).where(User.id.in_(list(owner_ids)))).all()
     users_by_id = {u.id: u for u in users}
 
-    links_by_email: Dict[str, List[Tuple[str, str]]] = {}
+    # Build hierarchical labels that include project and timeline for clarity in Kobo
+    all_wbs = session.exec(select(WbsItem).where(WbsItem.project_id == project_id)).all()
+    wbs_by_id = {w.id: w for w in all_wbs}
+    dropdown = build_wbs_dropdown_options(all_wbs, wbs_by_id)
+    label_by_id = {o["id"]: o["display"] for o in dropdown}
+
+    tasks_by_email: Dict[str, List[Tuple[str, str]]] = {}
     for item in items:
-        link = kobo_prefilled_enketo_link(
-            cfg=cfg,
-            asset_uid=asset_uid,
-            ecotrack_project_id=p.id,
-            ecotrack_wbs_id=item.id,
-        )
+        timeline = ""
+        if item.start_date or item.end_date:
+            timeline = f" ({item.start_date or ''} → {item.end_date or ''})"
+        label = f"{p.name} · {label_by_id.get(item.id, item.name)}{timeline}"
         for uid in [item.primary_owner_id, item.secondary_owner_id]:
             if not uid or uid not in users_by_id:
                 continue
             u = users_by_id[uid]
             if not u.email:
                 continue
-            links_by_email.setdefault(u.email, []).append((item.name, link))
+            tasks_by_email.setdefault(u.email, []).append((item.id, label))
 
-    notify_kobo_activity_links(users=users, project_name=p.name, activity_date=activity_date, links_by_user_email=links_by_email)
+    # Create/update per-user Kobo forms and send each user their form link (so they can find it easily)
+    links_by_email: Dict[str, List[Tuple[str, str]]] = {}
+    updated_forms = 0
+    for u in users:
+        if not u.email:
+            continue
+        user_tasks = tasks_by_email.get(u.email) or []
+        if not user_tasks:
+            continue
 
-    sent_count = sum(1 for u in users if u.email in links_by_email and links_by_email[u.email])
+        settings_key = f"kobo.asset_uid.user.{u.id}"
+        existing = _get_setting(session, settings_key)
+        try:
+            asset_uid = kobo_create_or_update_user_form(
+                cfg=cfg,
+                existing_asset_uid=existing,
+                user_email=u.email,
+                task_choices=user_tasks,
+            )
+        except Exception as e:
+            logging.exception("Kobo push failed for %s: %s", u.email, e)
+            continue
+
+        _set_setting(session, settings_key, asset_uid)
+        form_link = f"{cfg.base_url}/#/forms/{asset_uid}/summary"
+        links_by_email.setdefault(u.email, []).append((f"{p.name} tasks form", form_link))
+        updated_forms += 1
+
+    # Notify: send each user the link to their Kobo form summary page
+    if links_by_email:
+        notify_kobo_activity_links(users=users, project_name=p.name, activity_date=activity_date, links_by_user_email=links_by_email)
+
+    sent_count = updated_forms
     return RedirectResponse(
         f"/projects/{project_id}?sent_kobo=1&count={sent_count}&date={activity_date}",
         status_code=303,
