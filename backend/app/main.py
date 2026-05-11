@@ -87,6 +87,10 @@ app = FastAPI(title="Ecotrack")
 _BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 templates = Jinja2Templates(directory=os.path.join(_BASE_DIR, "templates"))
 templates.env.globals["hasattr"] = hasattr  # so templates can use hasattr(obj, 'attr')
+# NOTE: On some production builds Jinja's template cache can mis-handle keys, causing
+# "TypeError: unhashable type: 'dict'" during get_template(). Disabling cache avoids
+# hard failures and is acceptable for this MVP.
+templates.env.cache = None
 app.mount("/static", StaticFiles(directory=os.path.join(_BASE_DIR, "static")), name="static")
 
 
