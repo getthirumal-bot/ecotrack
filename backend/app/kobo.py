@@ -1,0 +1,228 @@
+from __future__ import annotations
+
+import base64
+import io
+import json
+import mimetypes
+import os
+import time
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
+import httpx
+from openpyxl import Workbook
+
+
+class KoboError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class KoboConfig:
+    base_url: str
+    token: str
+
+    @staticmethod
+    def from_env() -> "KoboConfig":
+        base_url = (os.environ.get("KOBO_BASE_URL") or "https://eu.kobotoolbox.org").strip().rstrip("/")
+        token = (os.environ.get("KOBO_API_TOKEN") or "").strip()
+        if not token:
+            raise KoboError("KOBO_API_TOKEN is not set")
+        return KoboConfig(base_url=base_url, token=token)
+
+
+def _auth_headers(token: str) -> Dict[str, str]:
+    return {
+        "Authorization": f"Token {token}",
+        "Accept": "application/json",
+    }
+
+
+def _xlsx_bytes_for_ecotrack_field_updates_form() -> bytes:
+    """
+    Build a simple XLSForm (as .xlsx) for Kobo:
+    - hidden Ecotrack ids (project_id, wbs_id)
+    - status update
+    - phase (before/after)
+    - gps + photo + audio + video + notes
+    """
+    wb = Workbook()
+
+    ws_survey = wb.active
+    ws_survey.title = "survey"
+    ws_choices = wb.create_sheet("choices")
+    ws_settings = wb.create_sheet("settings")
+
+    ws_survey.append(["type", "name", "label", "required", "appearance"])
+
+    # Hidden mapping fields (prefilled from Ecotrack link)
+    ws_survey.append(["text", "ecotrack_project_id", "Ecotrack Project ID", "yes", "hidden"])
+    ws_survey.append(["text", "ecotrack_wbs_id", "Ecotrack WBS/Task ID", "yes", "hidden"])
+
+    # Who / when - Kobo already stores metadata, but keep a visible field for convenience
+    ws_survey.append(["text", "submitted_by", "Your name / email (optional)", "no", ""])
+
+    # Phase and status
+    ws_survey.append(["select_one before_after", "phase", "Phase", "yes", ""])
+    ws_survey.append(["select_one wbs_status", "wbs_status", "Task status", "yes", ""])
+
+    # Evidence
+    ws_survey.append(["geopoint", "gps", "GPS location", "no", ""])
+    ws_survey.append(["image", "photo", "Photo (optional)", "no", ""])
+    ws_survey.append(["audio", "audio", "Audio note (optional)", "no", ""])
+    ws_survey.append(["video", "video", "Video (optional)", "no", ""])
+    ws_survey.append(["note", "instructions", "If you are offline, you can submit and it will sync when internet is back.", "no", ""])
+    ws_survey.append(["text", "remarks", "Remarks (optional)", "no", ""])
+
+    ws_choices.append(["list_name", "name", "label"])
+    ws_choices.append(["before_after", "before", "Before"])
+    ws_choices.append(["before_after", "after", "After"])
+
+    ws_choices.append(["wbs_status", "in_progress", "In progress"])
+    ws_choices.append(["wbs_status", "pending_approval", "Pending approval"])
+    ws_choices.append(["wbs_status", "completed", "Completed"])
+
+    ws_settings.append(["form_title", "form_id"])
+    ws_settings.append(["Ecotrack Field Updates (v1)", "ecotrack_field_updates_v1"])
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    return bio.getvalue()
+
+
+def kobo_import_xlsform(*, cfg: KoboConfig) -> str:
+    """
+    Upload an XLSForm to Kobo and return the import uid.
+    Uses the /api/v2/imports/ endpoint (multipart).
+    """
+    xlsx = _xlsx_bytes_for_ecotrack_field_updates_form()
+    files = {
+        "file": ("ecotrack_field_updates_v1.xlsx", xlsx, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    }
+    data = {"library": "false"}
+    url = f"{cfg.base_url}/api/v2/imports/"
+    with httpx.Client(timeout=60.0) as client:
+        r = client.post(url, headers=_auth_headers(cfg.token), data=data, files=files)
+        if r.status_code not in (200, 201):
+            raise KoboError(f"Import failed ({r.status_code}): {r.text}")
+        payload = r.json()
+        uid = payload.get("uid")
+        if not uid:
+            raise KoboError(f"Import did not return uid: {payload}")
+        return uid
+
+
+def kobo_wait_import(*, cfg: KoboConfig, import_uid: str, timeout_s: int = 90) -> Dict[str, Any]:
+    url = f"{cfg.base_url}/api/v2/imports/{import_uid}/"
+    deadline = time.time() + timeout_s
+    with httpx.Client(timeout=30.0) as client:
+        while True:
+            r = client.get(url, headers=_auth_headers(cfg.token))
+            if r.status_code != 200:
+                raise KoboError(f"Import status failed ({r.status_code}): {r.text}")
+            payload = r.json()
+            status = (payload.get("status") or "").lower()
+            if status in ("complete", "completed", "success"):
+                return payload
+            if status in ("error", "failed"):
+                raise KoboError(f"Import failed: {payload}")
+            if time.time() > deadline:
+                raise KoboError(f"Import timed out: {payload}")
+            time.sleep(2)
+
+
+def kobo_extract_created_asset_uid(import_payload: Dict[str, Any]) -> str:
+    """
+    Kobo returns import messages with created/updated assets.
+    We attempt to find the first updated/created uid.
+    """
+    messages = import_payload.get("messages") or {}
+    for key in ("created", "updated"):
+        arr = messages.get(key) or []
+        if isinstance(arr, list) and arr:
+            uid = arr[0].get("uid")
+            if uid:
+                return uid
+    # Some servers nest under "detail" in errors; be explicit if not found.
+    raise KoboError(f"Could not find created asset uid in import response: {import_payload}")
+
+
+def kobo_deploy_form(*, cfg: KoboConfig, asset_uid: str) -> Dict[str, Any]:
+    url = f"{cfg.base_url}/api/v2/assets/{asset_uid}/deployment/"
+    with httpx.Client(timeout=60.0) as client:
+        r = client.post(url, headers=_auth_headers(cfg.token), json={"active": True})
+        if r.status_code != 200:
+            raise KoboError(f"Deploy failed ({r.status_code}): {r.text}")
+        return r.json()
+
+
+def kobo_list_submissions(
+    *,
+    cfg: KoboConfig,
+    asset_uid: str,
+    submitted_after: Optional[str] = None,
+    limit: int = 300,
+) -> List[Dict[str, Any]]:
+    """
+    List submissions. Uses query on _submission_time if submitted_after provided.
+    """
+    url = f"{cfg.base_url}/api/v2/assets/{asset_uid}/data/"
+    params: Dict[str, Any] = {"start": 0, "limit": min(1000, max(1, limit))}
+    if submitted_after:
+        params["query"] = json.dumps({"_submission_time": {"$gt": submitted_after}})
+    with httpx.Client(timeout=60.0) as client:
+        r = client.get(url, headers=_auth_headers(cfg.token), params=params)
+        if r.status_code != 200:
+            raise KoboError(f"List submissions failed ({r.status_code}): {r.text}")
+        payload = r.json()
+        results = payload.get("results") or payload  # some servers return raw list
+        if isinstance(results, list):
+            return results
+        if isinstance(results, dict) and "results" in results:
+            return results["results"] or []
+        if isinstance(results, dict) and "results" not in results and "count" in results:
+            return results.get("results") or []
+        # PaginatedAssetList style
+        if isinstance(payload, dict) and "results" in payload:
+            return payload["results"] or []
+        return []
+
+
+def kobo_list_attachments(*, cfg: KoboConfig, asset_uid: str, submission_uid: str) -> List[Dict[str, Any]]:
+    url = f"{cfg.base_url}/api/v2/assets/{asset_uid}/data/{submission_uid}/attachments/"
+    with httpx.Client(timeout=60.0) as client:
+        r = client.get(url, headers=_auth_headers(cfg.token))
+        if r.status_code != 200:
+            raise KoboError(f"List attachments failed ({r.status_code}): {r.text}")
+        payload = r.json()
+        results = payload.get("results") if isinstance(payload, dict) else payload
+        return results or []
+
+
+def kobo_download_attachment_base64(
+    *,
+    cfg: KoboConfig,
+    asset_uid: str,
+    submission_uid: str,
+    attachment_id: int,
+) -> Tuple[str, str, str]:
+    """
+    Returns (filename, content_type, base64).
+    """
+    # Best-effort endpoint: /attachments/{id}/ (often redirects) OR /attachments/{id}/{suffix}/.
+    url = f"{cfg.base_url}/api/v2/assets/{asset_uid}/data/{submission_uid}/attachments/{attachment_id}/"
+    with httpx.Client(timeout=120.0, follow_redirects=True) as client:
+        r = client.get(url, headers=_auth_headers(cfg.token))
+        if r.status_code != 200:
+            raise KoboError(f"Download attachment failed ({r.status_code}): {r.text}")
+        content = r.content
+        content_type = (r.headers.get("content-type") or "").split(";")[0].strip()
+        filename = "attachment"
+        disp = r.headers.get("content-disposition") or ""
+        if "filename=" in disp:
+            filename = disp.split("filename=", 1)[1].strip().strip('"')
+        if not content_type:
+            guessed, _ = mimetypes.guess_type(filename)
+            content_type = guessed or "application/octet-stream"
+        return filename, content_type, base64.b64encode(content).decode("utf-8")
+

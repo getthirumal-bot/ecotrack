@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page">
+  <div class="page-header">
+    <div>
+      <h1>Integrations</h1>
+      <div class="muted">Configure and sync external tools.</div>
+    </div>
+  </div>
+
+  {% if error %}
+    <div class="card" style="border:1px solid rgba(255,80,80,.35); background: rgba(255,80,80,.06);">
+      <b>Error:</b> {{ error }}
+    </div>
+  {% endif %}
+
+  {% if message %}
+    <div class="card" style="border:1px solid rgba(100,200,120,.35); background: rgba(80,160,110,.06);">
+      {{ message }}
+    </div>
+  {% endif %}
+
+  <div class="grid" style="grid-template-columns: 1fr; gap: 14px;">
+    <div class="card">
+      <h2 style="margin-top:0;">KoboToolbox</h2>
+      <div class="muted" style="margin-bottom:10px;">
+        Uses Railway env vars <code>KOBO_BASE_URL</code> and <code>KOBO_API_TOKEN</code>.
+      </div>
+
+      <div style="display:grid; gap:10px;">
+        <div>
+          <b>Current Kobo form asset UID:</b>
+          <code>{{ kobo_asset_uid or "not set" }}</code>
+        </div>
+        <div>
+          <b>Last synced submission time:</b>
+          <code>{{ kobo_last_time or "not set" }}</code>
+        </div>
+      </div>
+
+      <hr style="opacity:.25; margin: 14px 0;" />
+
+      <div class="muted" style="margin-bottom:8px;">
+        Option A (recommended): Use the already-created Kobo form by saving its Asset UID here.
+      </div>
+      <form method="post" action="/integrations/kobo/config" class="form-row" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+        <div style="min-width:320px; flex:1;">
+          <label class="muted">Kobo Asset UID</label>
+          <input name="asset_uid" value="{{ kobo_asset_uid or '' }}" placeholder="e.g. apnP2Ty79xMob2DnA7S38d" />
+        </div>
+        <button class="btn primary" type="submit">Save Asset UID</button>
+      </form>
+
+      <hr style="opacity:.25; margin: 14px 0;" />
+
+      <div class="muted" style="margin-bottom:8px;">
+        Option B: Create & deploy the Kobo form automatically (uses your API token).
+      </div>
+      <form method="post" action="/integrations/kobo/setup">
+        <button class="btn ghost" type="submit">Create & Deploy Kobo Form (Setup)</button>
+      </form>
+
+      <hr style="opacity:.25; margin: 14px 0;" />
+
+      <div class="muted" style="margin-bottom:8px;">
+        Pull new submissions from Kobo and apply to Ecotrack WBS (status + GPS + photo/audio).
+      </div>
+      <form method="post" action="/integrations/kobo/sync">
+        <button class="btn primary" type="submit">Sync now</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+

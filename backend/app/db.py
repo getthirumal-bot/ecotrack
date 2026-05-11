@@ -39,6 +39,11 @@ def _run_postgres_migrations() -> None:
             conn.execute(text(
                 "ALTER TABLE project ADD COLUMN IF NOT EXISTS project_type VARCHAR DEFAULT 'implementation'"
             ))
+            # WBS item integration metadata (Kobo)
+            conn.execute(text("ALTER TABLE wbsitem ADD COLUMN IF NOT EXISTS last_lat DOUBLE PRECISION"))
+            conn.execute(text("ALTER TABLE wbsitem ADD COLUMN IF NOT EXISTS last_lng DOUBLE PRECISION"))
+            conn.execute(text("ALTER TABLE wbsitem ADD COLUMN IF NOT EXISTS last_kobo_submission_uid VARCHAR"))
+            conn.execute(text("ALTER TABLE wbsitem ADD COLUMN IF NOT EXISTS last_kobo_submission_time VARCHAR"))
     except Exception as e:
         logging.exception("Postgres migration failed: %s", e)
     # Verify column exists so startup fails fast if migration did not apply
@@ -109,6 +114,22 @@ def _run_sqlite_migrations() -> None:
                 conn.execute(text("ALTER TABLE project ADD COLUMN project_type VARCHAR DEFAULT 'implementation'"))
     except Exception:
         pass
+
+    # WBS item integration metadata (Kobo)
+    for col, stmt in [
+        ("last_lat", "ALTER TABLE wbsitem ADD COLUMN last_lat REAL"),
+        ("last_lng", "ALTER TABLE wbsitem ADD COLUMN last_lng REAL"),
+        ("last_kobo_submission_uid", "ALTER TABLE wbsitem ADD COLUMN last_kobo_submission_uid VARCHAR"),
+        ("last_kobo_submission_time", "ALTER TABLE wbsitem ADD COLUMN last_kobo_submission_time VARCHAR"),
+    ]:
+        try:
+            with engine.begin() as conn:
+                r = conn.execute(text("PRAGMA table_info(wbsitem)"))
+                rows = r.fetchall()
+                if rows and not any(row[1] == col for row in rows):
+                    conn.execute(text(stmt))
+        except Exception:
+            pass
 
 
 def get_session():

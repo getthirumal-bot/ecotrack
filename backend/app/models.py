@@ -152,6 +152,12 @@ class WbsItem(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+    # Kobo integration: last field submission metadata (optional)
+    last_lat: Optional[float] = Field(default=None, index=True)
+    last_lng: Optional[float] = Field(default=None, index=True)
+    last_kobo_submission_uid: Optional[str] = Field(default=None, index=True)
+    last_kobo_submission_time: Optional[str] = Field(default=None, index=True)
+
 
 class WbsPhoto(SQLModel, table=True):
     """Before/after photo for task progress on a WBS item. One before and one after per item."""
@@ -251,4 +257,14 @@ class DefectAttachment(SQLModel, table=True):
     content_base64: Optional[str] = Field(default=None)  # base64 for storage
     phase: str = "before"  # "before" = at report/open; "after" = at resolution for comparison
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class IntegrationSetting(SQLModel, table=True):
+    """
+    Simple key/value store for integration configuration and cursors
+    (e.g. KOBO asset UID, last synced submission time).
+    """
+
+    key: str = Field(primary_key=True)
+    value: str = ""
 

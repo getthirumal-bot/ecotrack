@@ -8,3 +8,4 @@ python-multipart
 itsdangerous
 openpyxl
 psycopg2-binary
+httpx

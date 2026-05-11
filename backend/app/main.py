@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 import base64
+import mimetypes
 from fastapi import Depends, File, FastAPI, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.responses import Response as RawResponse, StreamingResponse
@@ -43,6 +44,17 @@ def _debug_log(location: str, message: str, data: dict, hypothesis_id: str, run_
 from .notifications import send_activity_reminders as notify_activity_reminders
 from .notifications import send_defect_reminders as notify_defect_reminders
 from .seed_data import seed_demo_projects
+from .kobo import (
+    KoboConfig,
+    KoboError,
+    kobo_deploy_form,
+    kobo_download_attachment_base64,
+    kobo_extract_created_asset_uid,
+    kobo_import_xlsform,
+    kobo_list_attachments,
+    kobo_list_submissions,
+    kobo_wait_import,
+)
 from .models import (
     BoqItem,
     Defect,
@@ -67,6 +79,7 @@ from .models import (
     WbsItemType,
     WbsPhoto,
     WbsStatus,
+    IntegrationSetting,
 )
 
 app = FastAPI(title="Ecotrack")
@@ -259,6 +272,268 @@ def build_wbs_dropdown_options(
         out.append({"id": w.id, "display": display, "path": path})
     out.sort(key=lambda o: o["display"])
     return out
+
+
+def _get_setting(session: Session, key: str) -> Optional[str]:
+    s = session.exec(select(IntegrationSetting).where(IntegrationSetting.key == key)).first()
+    return s.value if s else None
+
+
+def _set_setting(session: Session, key: str, value: str) -> None:
+    existing = session.exec(select(IntegrationSetting).where(IntegrationSetting.key == key)).first()
+    if existing:
+        existing.value = value
+        session.add(existing)
+    else:
+        session.add(IntegrationSetting(key=key, value=value))
+    session.commit()
+
+
+def _kobo_asset_uid(session: Session) -> Optional[str]:
+    return _get_setting(session, "kobo.asset_uid")
+
+
+def _parse_geopoint(value: Any) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Kobo geopoint often returns "lat lng alt acc" as string.
+    """
+    if not value:
+        return None, None
+    if isinstance(value, str):
+        parts = value.strip().split()
+        if len(parts) >= 2:
+            try:
+                return float(parts[0]), float(parts[1])
+            except Exception:
+                return None, None
+    if isinstance(value, list) and len(value) >= 2:
+        try:
+            return float(value[0]), float(value[1])
+        except Exception:
+            return None, None
+    return None, None
+
+
+@app.get("/integrations", response_class=HTMLResponse)
+def integrations(
+    request: Request,
+    user: User = Depends(require_roles(Role.architect, Role.project_owner)),
+    session: Session = Depends(get_session),
+):
+    ctx = ui_context(session, user)
+    ctx.update(
+        {
+            "request": request,
+            "kobo_asset_uid": _get_setting(session, "kobo.asset_uid"),
+            "kobo_last_time": _get_setting(session, "kobo.last_submission_time"),
+            "message": request.query_params.get("message"),
+            "error": request.query_params.get("error"),
+        }
+    )
+    return templates.TemplateResponse("integrations.html", ctx)
+
+
+@app.post("/integrations/kobo/setup")
+def kobo_setup(
+    request: Request,
+    user: User = Depends(require_roles(Role.architect, Role.project_owner)),
+    session: Session = Depends(get_session),
+):
+    """
+    Create and deploy the Kobo form via API and store the asset UID in Ecotrack DB.
+    Requires KOBO_API_TOKEN env var.
+    """
+    try:
+        cfg = KoboConfig.from_env()
+        import_uid = kobo_import_xlsform(cfg=cfg)
+        import_payload = kobo_wait_import(cfg=cfg, import_uid=import_uid)
+        asset_uid = kobo_extract_created_asset_uid(import_payload)
+        kobo_deploy_form(cfg=cfg, asset_uid=asset_uid)
+        _set_setting(session, "kobo.asset_uid", asset_uid)
+        _set_setting(session, "kobo.last_submission_time", "")
+        if "text/html" in (request.headers.get("accept") or ""):
+            return RedirectResponse(
+                url=f"/integrations?message=Kobo+setup+completed.+Asset+UID:+{quote(asset_uid)}",
+                status_code=302,
+            )
+        return {"ok": True, "asset_uid": asset_uid, "base_url": cfg.base_url}
+    except KoboError as e:
+        if "text/html" in (request.headers.get("accept") or ""):
+            return RedirectResponse(url=f"/integrations?error={quote(str(e))}", status_code=302)
+        raise HTTPException(400, str(e))
+
+
+@app.post("/integrations/kobo/config")
+def kobo_config(
+    request: Request,
+    asset_uid: str = Form(...),
+    user: User = Depends(require_roles(Role.architect, Role.project_owner)),
+    session: Session = Depends(get_session),
+):
+    """
+    Save an existing Kobo asset UID (form id) into Ecotrack DB settings.
+    Use this if you created the form already (manually or via another environment).
+    """
+    asset_uid = (asset_uid or "").strip()
+    if not asset_uid:
+        raise HTTPException(400, "asset_uid is required")
+    _set_setting(session, "kobo.asset_uid", asset_uid)
+    if _get_setting(session, "kobo.last_submission_time") is None:
+        _set_setting(session, "kobo.last_submission_time", "")
+    if "text/html" in (request.headers.get("accept") or ""):
+        return RedirectResponse(url=f"/integrations?message=Saved+Kobo+Asset+UID:+{quote(asset_uid)}", status_code=302)
+    return {"ok": True, "asset_uid": asset_uid}
+
+
+@app.post("/integrations/kobo/sync")
+def kobo_sync(
+    request: Request,
+    user: User = Depends(require_roles(Role.architect, Role.project_owner)),
+    session: Session = Depends(get_session),
+):
+    """
+    Pull new Kobo submissions and apply to WBS:
+    - update WBS status
+    - store GPS on WbsItem
+    - download and store photo/audio into WbsPhoto/WbsAudio (phase before/after)
+    """
+    asset_uid = _kobo_asset_uid(session)
+    if not asset_uid:
+        if "text/html" in (request.headers.get("accept") or ""):
+            return RedirectResponse(url="/integrations?error=Kobo+not+configured.+Set+Asset+UID+or+run+Setup.", status_code=302)
+        raise HTTPException(400, "Kobo not set up yet. Run /integrations/kobo/setup first.")
+
+    try:
+        cfg = KoboConfig.from_env()
+    except KoboError as e:
+        if "text/html" in (request.headers.get("accept") or ""):
+            return RedirectResponse(url=f"/integrations?error={quote(str(e))}", status_code=302)
+        raise HTTPException(400, str(e))
+
+    last_time = _get_setting(session, "kobo.last_submission_time") or None
+    submissions = kobo_list_submissions(cfg=cfg, asset_uid=asset_uid, submitted_after=last_time, limit=500)
+
+    applied = 0
+    skipped = 0
+    newest_time = last_time or ""
+
+    for sub in submissions:
+        # Kobo uses "_id" integer id in some responses; in others there's "uuid"/"_uuid"
+        submission_uid = sub.get("_uuid") or sub.get("uuid") or sub.get("_id") or sub.get("id")
+        submission_time = sub.get("_submission_time") or sub.get("submission_time") or ""
+        if submission_time and submission_time > newest_time:
+            newest_time = submission_time
+
+        wbs_id = (sub.get("ecotrack_wbs_id") or "").strip()
+        if not wbs_id:
+            skipped += 1
+            continue
+
+        w = session.exec(select(WbsItem).where(WbsItem.id == wbs_id)).first()
+        if not w:
+            skipped += 1
+            continue
+
+        # Idempotency: skip if already applied this submission UID
+        if submission_uid and w.last_kobo_submission_uid == str(submission_uid):
+            skipped += 1
+            continue
+
+        # Status mapping
+        status_raw = (sub.get("wbs_status") or "").strip()
+        if status_raw in (WbsStatus.in_progress.value, WbsStatus.pending_approval.value, WbsStatus.completed.value, WbsStatus.rejected.value, WbsStatus.pending.value):
+            w.status = WbsStatus(status_raw)
+
+        # GPS
+        lat, lng = _parse_geopoint(sub.get("gps"))
+        if lat is not None and lng is not None:
+            w.last_lat = lat
+            w.last_lng = lng
+
+        # Track submission metadata
+        if submission_uid:
+            w.last_kobo_submission_uid = str(submission_uid)
+        if submission_time:
+            w.last_kobo_submission_time = str(submission_time)
+
+        # Evidence (photo/audio) pulled from attachment list; map by question name where possible
+        phase = (sub.get("phase") or "before").strip().lower()
+        if phase not in ("before", "after"):
+            phase = "before"
+
+        try:
+            if submission_uid:
+                atts = kobo_list_attachments(cfg=cfg, asset_uid=asset_uid, submission_uid=str(submission_uid))
+            else:
+                atts = []
+        except Exception:
+            atts = []
+
+        # Kobo attachment objects typically have: id, filename, mimetype, question_xpath/question_name
+        for att in atts:
+            att_id = att.get("id")
+            if att_id is None:
+                continue
+            question = (att.get("question_name") or att.get("question_xpath") or "").lower()
+            mimetype = (att.get("mimetype") or att.get("content_type") or "").lower()
+
+            if not mimetype and isinstance(att.get("filename"), str):
+                guessed, _ = mimetypes.guess_type(att["filename"])
+                mimetype = (guessed or "").lower()
+
+            is_photo = ("photo" in question) or mimetype.startswith("image/")
+            is_audio = ("audio" in question) or mimetype.startswith("audio/")
+
+            if not is_photo and not is_audio:
+                continue
+
+            try:
+                filename, content_type, b64 = kobo_download_attachment_base64(
+                    cfg=cfg,
+                    asset_uid=asset_uid,
+                    submission_uid=str(submission_uid),
+                    attachment_id=int(att_id),
+                )
+            except Exception:
+                continue
+
+            if is_photo:
+                existing = session.exec(
+                    select(WbsPhoto).where(WbsPhoto.wbs_item_id == w.id, WbsPhoto.phase == phase)
+                ).first()
+                if not existing:
+                    existing = WbsPhoto(wbs_item_id=w.id, phase=phase)
+                existing.filename = filename
+                existing.content_type = content_type
+                existing.content_base64 = b64
+                session.add(existing)
+
+            if is_audio:
+                existing_a = session.exec(
+                    select(WbsAudio).where(WbsAudio.wbs_item_id == w.id, WbsAudio.phase == phase)
+                ).first()
+                if not existing_a:
+                    existing_a = WbsAudio(wbs_item_id=w.id, phase=phase)
+                existing_a.filename = filename
+                existing_a.content_type = content_type
+                existing_a.content_base64 = b64
+                session.add(existing_a)
+
+        w.updated_at = _now()
+        session.add(w)
+        session.commit()
+        applied += 1
+
+    # update cursor
+    if newest_time and newest_time != (last_time or ""):
+        _set_setting(session, "kobo.last_submission_time", newest_time)
+
+    if "text/html" in (request.headers.get("accept") or ""):
+        return RedirectResponse(
+            url=f"/integrations?message=Sync+done.+Applied:{applied}+Skipped:{skipped}+Last:{quote(newest_time or '')}",
+            status_code=302,
+        )
+    return {"ok": True, "asset_uid": asset_uid, "applied": applied, "skipped": skipped, "last_submission_time": newest_time}
 
 
 def wbs_path_for_item(w: WbsItem, wbs_by_id: Dict[str, WbsItem]) -> str:
