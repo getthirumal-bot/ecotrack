@@ -107,6 +107,207 @@ def _integration_key_ok(request: Request) -> bool:
     return bool(got) and got == key
 
 
+def _sync_interval_seconds_from_env() -> Optional[float]:
+    """
+    KOBO_SYNC_INTERVAL_HOURS:
+      - unset/empty => disabled
+      - <= 0 => disabled
+      - float hours (e.g. 1 => 1 hour, 0.10 => 6 minutes)
+    """
+    raw = (os.environ.get("KOBO_SYNC_INTERVAL_HOURS") or "").strip()
+    if not raw:
+        return None
+    try:
+        hours = float(raw)
+    except Exception:
+        logging.warning("Invalid KOBO_SYNC_INTERVAL_HOURS=%r (expected float hours). Disabling.", raw)
+        return None
+    if hours <= 0:
+        return None
+    seconds = hours * 3600.0
+    # safety floor to avoid hammering
+    return max(60.0, seconds)
+
+
+def _kobo_sync_impl(session: Session) -> Dict[str, Any]:
+    """
+    Core Kobo->Ecotrack sync logic (no Request/user). Used by HTTP endpoint and background scheduler.
+    """
+    asset_uid = _kobo_asset_uid(session)
+    if not asset_uid:
+        raise KoboError("Kobo not configured (missing asset UID).")
+
+    cfg = KoboConfig.from_env()
+    last_time = _get_setting(session, "kobo.last_submission_time") or None
+    submissions = kobo_list_submissions(cfg=cfg, asset_uid=asset_uid, submitted_after=last_time, limit=500)
+
+    applied = 0
+    skipped = 0
+    newest_time = last_time or ""
+
+    for sub in submissions:
+        submission_uid = sub.get("_uuid") or sub.get("uuid") or sub.get("_id") or sub.get("id")
+        submission_time = sub.get("_submission_time") or sub.get("submission_time") or ""
+        if submission_time and submission_time > newest_time:
+            newest_time = submission_time
+
+        wbs_id = (sub.get("ecotrack_wbs_id") or "").strip()
+        if not wbs_id:
+            skipped += 1
+            continue
+
+        w = session.exec(select(WbsItem).where(WbsItem.id == wbs_id)).first()
+        if not w:
+            skipped += 1
+            continue
+
+        if submission_uid and w.last_kobo_submission_uid == str(submission_uid):
+            skipped += 1
+            continue
+
+        status_raw = (sub.get("wbs_status") or "").strip()
+        if status_raw in (
+            WbsStatus.in_progress.value,
+            WbsStatus.pending_approval.value,
+            WbsStatus.completed.value,
+            WbsStatus.rejected.value,
+            WbsStatus.pending.value,
+        ):
+            w.status = WbsStatus(status_raw)
+
+        lat, lng = _parse_geopoint(sub.get("gps"))
+        if lat is not None and lng is not None:
+            w.last_lat = lat
+            w.last_lng = lng
+
+        if submission_uid:
+            w.last_kobo_submission_uid = str(submission_uid)
+        if submission_time:
+            w.last_kobo_submission_time = str(submission_time)
+
+        phase = (sub.get("phase") or "before").strip().lower()
+        if phase not in ("before", "after"):
+            phase = "before"
+
+        try:
+            atts = (
+                kobo_list_attachments(cfg=cfg, asset_uid=asset_uid, submission_uid=str(submission_uid))
+                if submission_uid
+                else []
+            )
+        except Exception:
+            atts = []
+
+        for att in atts:
+            att_id = att.get("id")
+            if att_id is None:
+                continue
+            question = (att.get("question_name") or att.get("question_xpath") or "").lower()
+            mimetype = (att.get("mimetype") or att.get("content_type") or "").lower()
+            if not mimetype and isinstance(att.get("filename"), str):
+                guessed, _ = mimetypes.guess_type(att["filename"])
+                mimetype = (guessed or "").lower()
+
+            is_photo = ("photo" in question) or mimetype.startswith("image/")
+            is_audio = ("audio" in question) or mimetype.startswith("audio/")
+            if not is_photo and not is_audio:
+                continue
+
+            try:
+                filename, content_type, b64 = kobo_download_attachment_base64(
+                    cfg=cfg,
+                    asset_uid=asset_uid,
+                    submission_uid=str(submission_uid),
+                    attachment_id=int(att_id),
+                )
+            except Exception:
+                continue
+
+            if is_photo:
+                existing = session.exec(
+                    select(WbsPhoto).where(WbsPhoto.wbs_item_id == w.id, WbsPhoto.phase == phase)
+                ).first()
+                if not existing:
+                    existing = WbsPhoto(wbs_item_id=w.id, phase=phase)
+                existing.filename = filename
+                existing.content_type = content_type
+                existing.content_base64 = b64
+                session.add(existing)
+
+            if is_audio:
+                existing_a = session.exec(
+                    select(WbsAudio).where(WbsAudio.wbs_item_id == w.id, WbsAudio.phase == phase)
+                ).first()
+                if not existing_a:
+                    existing_a = WbsAudio(wbs_item_id=w.id, phase=phase)
+                existing_a.filename = filename
+                existing_a.content_type = content_type
+                existing_a.content_base64 = b64
+                session.add(existing_a)
+
+        w.updated_at = _now()
+        session.add(w)
+        session.commit()
+        applied += 1
+
+    if newest_time and newest_time != (last_time or ""):
+        _set_setting(session, "kobo.last_submission_time", newest_time)
+
+    return {
+        "ok": True,
+        "asset_uid": asset_uid,
+        "applied": applied,
+        "skipped": skipped,
+        "last_submission_time": newest_time,
+    }
+
+
+_KOBO_SYNC_TASK_STARTED = False
+
+
+@app.on_event("startup")
+async def _startup_kobo_auto_sync() -> None:
+    """
+    Optional in-process scheduler. Enable by setting KOBO_SYNC_INTERVAL_HOURS in Railway.
+    """
+    global _KOBO_SYNC_TASK_STARTED
+    if _KOBO_SYNC_TASK_STARTED:
+        return
+    interval_s = _sync_interval_seconds_from_env()
+    if not interval_s:
+        return
+
+    _KOBO_SYNC_TASK_STARTED = True
+    logging.info("Kobo auto-sync enabled: every %.1f seconds", interval_s)
+
+    async def _loop() -> None:
+        await asyncio.sleep(10)  # small delay after boot
+        while True:
+            try:
+                # run sync in a worker thread to avoid blocking event loop (httpx sync calls)
+                def _run() -> None:
+                    with Session(engine) as session:
+                        try:
+                            res = _kobo_sync_impl(session)
+                            logging.info(
+                                "Kobo auto-sync ok: applied=%s skipped=%s last=%s",
+                                res.get("applied"),
+                                res.get("skipped"),
+                                res.get("last_submission_time"),
+                            )
+                        except KoboError as e:
+                            logging.warning("Kobo auto-sync skipped: %s", e)
+                        except Exception as e:
+                            logging.exception("Kobo auto-sync failed: %s", e)
+
+                await asyncio.to_thread(_run)
+            except Exception:
+                logging.exception("Kobo auto-sync loop error")
+            await asyncio.sleep(interval_s)
+
+    asyncio.create_task(_loop())
+
+
 @app.middleware("http")
 async def https_redirect_and_hsts(request: Request, call_next):
     """
@@ -421,143 +622,19 @@ def kobo_sync(
     """
     if not (_integration_key_ok(request) or (user and user.role in (Role.architect, Role.project_owner))):
         raise HTTPException(403, "Forbidden")
-    asset_uid = _kobo_asset_uid(session)
-    if not asset_uid:
-        if "text/html" in (request.headers.get("accept") or ""):
-            return RedirectResponse(url="/integrations?error=Kobo+not+configured.+Set+Asset+UID+or+run+Setup.", status_code=302)
-        raise HTTPException(400, "Kobo not set up yet. Run /integrations/kobo/setup first.")
-
     try:
-        cfg = KoboConfig.from_env()
+        res = _kobo_sync_impl(session)
     except KoboError as e:
         if "text/html" in (request.headers.get("accept") or ""):
             return RedirectResponse(url=f"/integrations?error={quote(str(e))}", status_code=302)
         raise HTTPException(400, str(e))
 
-    last_time = _get_setting(session, "kobo.last_submission_time") or None
-    submissions = kobo_list_submissions(cfg=cfg, asset_uid=asset_uid, submitted_after=last_time, limit=500)
-
-    applied = 0
-    skipped = 0
-    newest_time = last_time or ""
-
-    for sub in submissions:
-        # Kobo uses "_id" integer id in some responses; in others there's "uuid"/"_uuid"
-        submission_uid = sub.get("_uuid") or sub.get("uuid") or sub.get("_id") or sub.get("id")
-        submission_time = sub.get("_submission_time") or sub.get("submission_time") or ""
-        if submission_time and submission_time > newest_time:
-            newest_time = submission_time
-
-        wbs_id = (sub.get("ecotrack_wbs_id") or "").strip()
-        if not wbs_id:
-            skipped += 1
-            continue
-
-        w = session.exec(select(WbsItem).where(WbsItem.id == wbs_id)).first()
-        if not w:
-            skipped += 1
-            continue
-
-        # Idempotency: skip if already applied this submission UID
-        if submission_uid and w.last_kobo_submission_uid == str(submission_uid):
-            skipped += 1
-            continue
-
-        # Status mapping
-        status_raw = (sub.get("wbs_status") or "").strip()
-        if status_raw in (WbsStatus.in_progress.value, WbsStatus.pending_approval.value, WbsStatus.completed.value, WbsStatus.rejected.value, WbsStatus.pending.value):
-            w.status = WbsStatus(status_raw)
-
-        # GPS
-        lat, lng = _parse_geopoint(sub.get("gps"))
-        if lat is not None and lng is not None:
-            w.last_lat = lat
-            w.last_lng = lng
-
-        # Track submission metadata
-        if submission_uid:
-            w.last_kobo_submission_uid = str(submission_uid)
-        if submission_time:
-            w.last_kobo_submission_time = str(submission_time)
-
-        # Evidence (photo/audio) pulled from attachment list; map by question name where possible
-        phase = (sub.get("phase") or "before").strip().lower()
-        if phase not in ("before", "after"):
-            phase = "before"
-
-        try:
-            if submission_uid:
-                atts = kobo_list_attachments(cfg=cfg, asset_uid=asset_uid, submission_uid=str(submission_uid))
-            else:
-                atts = []
-        except Exception:
-            atts = []
-
-        # Kobo attachment objects typically have: id, filename, mimetype, question_xpath/question_name
-        for att in atts:
-            att_id = att.get("id")
-            if att_id is None:
-                continue
-            question = (att.get("question_name") or att.get("question_xpath") or "").lower()
-            mimetype = (att.get("mimetype") or att.get("content_type") or "").lower()
-
-            if not mimetype and isinstance(att.get("filename"), str):
-                guessed, _ = mimetypes.guess_type(att["filename"])
-                mimetype = (guessed or "").lower()
-
-            is_photo = ("photo" in question) or mimetype.startswith("image/")
-            is_audio = ("audio" in question) or mimetype.startswith("audio/")
-
-            if not is_photo and not is_audio:
-                continue
-
-            try:
-                filename, content_type, b64 = kobo_download_attachment_base64(
-                    cfg=cfg,
-                    asset_uid=asset_uid,
-                    submission_uid=str(submission_uid),
-                    attachment_id=int(att_id),
-                )
-            except Exception:
-                continue
-
-            if is_photo:
-                existing = session.exec(
-                    select(WbsPhoto).where(WbsPhoto.wbs_item_id == w.id, WbsPhoto.phase == phase)
-                ).first()
-                if not existing:
-                    existing = WbsPhoto(wbs_item_id=w.id, phase=phase)
-                existing.filename = filename
-                existing.content_type = content_type
-                existing.content_base64 = b64
-                session.add(existing)
-
-            if is_audio:
-                existing_a = session.exec(
-                    select(WbsAudio).where(WbsAudio.wbs_item_id == w.id, WbsAudio.phase == phase)
-                ).first()
-                if not existing_a:
-                    existing_a = WbsAudio(wbs_item_id=w.id, phase=phase)
-                existing_a.filename = filename
-                existing_a.content_type = content_type
-                existing_a.content_base64 = b64
-                session.add(existing_a)
-
-        w.updated_at = _now()
-        session.add(w)
-        session.commit()
-        applied += 1
-
-    # update cursor
-    if newest_time and newest_time != (last_time or ""):
-        _set_setting(session, "kobo.last_submission_time", newest_time)
-
     if "text/html" in (request.headers.get("accept") or ""):
         return RedirectResponse(
-            url=f"/integrations?message=Sync+done.+Applied:{applied}+Skipped:{skipped}+Last:{quote(newest_time or '')}",
+            url=f"/integrations?message=Sync+done.+Applied:{res.get('applied')}+Skipped:{res.get('skipped')}+Last:{quote(res.get('last_submission_time') or '')}",
             status_code=302,
         )
-    return {"ok": True, "asset_uid": asset_uid, "applied": applied, "skipped": skipped, "last_submission_time": newest_time}
+    return res
 
 
 def wbs_path_for_item(w: WbsItem, wbs_by_id: Dict[str, WbsItem]) -> str:
