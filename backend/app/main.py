@@ -335,7 +335,7 @@ def integrations(
             "error": request.query_params.get("error"),
         }
     )
-    return templates.TemplateResponse("integrations.html", ctx)
+    return templates.TemplateResponse(request, "integrations.html", ctx)
 
 
 @app.post("/integrations/kobo/setup")
@@ -885,10 +885,7 @@ def seed_fresh_alt(session: Session = Depends(get_session)) -> str:
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
-        "login.html",
-        {"request": request, "demo": True},
-    )
+    return templates.TemplateResponse(request, "login.html", {"demo": True})
 
 
 @app.post("/login")
@@ -902,8 +899,9 @@ def login(
     user = session.exec(select(User).where(User.email == email.strip().lower())).first()
     if not user or not verify_password(password, user.password_hash):
         return templates.TemplateResponse(
+            request,
             "login.html",
-            {"request": request, "error": "Invalid credentials", "demo": True},
+            {"error": "Invalid credentials", "demo": True},
             status_code=400,
         )
     token = create_access_token(user_id=user.id, role=user.role.value)
@@ -1081,7 +1079,7 @@ def dashboard(
             "dashboard_view_projects_link": "/projects",
         }
     )
-    return templates.TemplateResponse("dashboard.html", ctx)
+    return templates.TemplateResponse(request, "dashboard.html", ctx)
 
 
 @app.get("/maintenance", response_class=HTMLResponse)
@@ -1149,7 +1147,7 @@ def maintenance_dashboard(
             "dashboard_view_projects_link": "/maintenance/plans",
         }
     )
-    return templates.TemplateResponse("dashboard.html", ctx)
+    return templates.TemplateResponse(request, "dashboard.html", ctx)
 
 
 @app.get("/maintenance/plans", response_class=HTMLResponse)
@@ -1178,7 +1176,7 @@ def maintenance_plans(
         project_summaries.append({"project": p, "months": month_data})
     ctx = ui_context(session, user)
     ctx.update({"request": request, "project_summaries": project_summaries})
-    return templates.TemplateResponse("maintenance.html", ctx)
+    return templates.TemplateResponse(request, "maintenance.html", ctx)
 
 
 @app.get("/maintenance/project/{project_id}", response_class=HTMLResponse)
@@ -1216,7 +1214,7 @@ def maintenance_project_detail(
         "current_year": now.year,
         "current_month": now.month,
     })
-    return templates.TemplateResponse("maintenance_detail.html", ctx)
+    return templates.TemplateResponse(request, "maintenance_detail.html", ctx)
 
 
 @app.post("/maintenance/project/{project_id}/month")
@@ -1373,7 +1371,7 @@ def projects_page(
         # #region agent log
         _debug_log("main.py:_render", "before TemplateResponse", {"cards_len": len(cards)}, "H5")
         # #endregion
-        return templates.TemplateResponse("projects.html", ctx)
+        return templates.TemplateResponse(request, "projects.html", ctx)
 
     try:
         return _render()
@@ -1491,7 +1489,7 @@ def project_detail(
         "chart_cost": chart_cost,
         "users": users,
     })
-    return templates.TemplateResponse("project_detail.html", ctx)
+    return templates.TemplateResponse(request, "project_detail.html", ctx)
 
 
 @app.post("/projects/{project_id}/summary")
@@ -1801,7 +1799,7 @@ def wbs_page(
         "wbs_audios": wbs_audios,
         "users": users,
     })
-    return templates.TemplateResponse("wbs.html", ctx)
+    return templates.TemplateResponse(request, "wbs.html", ctx)
 
 
 @app.post("/wbs/create")
@@ -2575,7 +2573,7 @@ def boq_page(
             "mask_prices": user.role == Role.field_manager,
         }
     )
-    return templates.TemplateResponse("boq.html", ctx)
+    return templates.TemplateResponse(request, "boq.html", ctx)
 
 
 @app.post("/materials/create")
@@ -2620,7 +2618,7 @@ def material_edit_page(
         raise HTTPException(404, "Material not found")
     ctx = ui_context(session, user)
     ctx.update({"request": request, "material": m, "project_id": project_id})
-    return templates.TemplateResponse("material_edit.html", ctx)
+    return templates.TemplateResponse(request, "material_edit.html", ctx)
 
 
 @app.post("/materials/{material_id}/update")
@@ -2754,7 +2752,7 @@ def boq_edit_page(
         "request": request, "item": item, "project_id": project_id, "wbs_filter": wbs_filter or "",
         "wbs_dropdown_options": wbs_dropdown_options, "materials": materials,
     })
-    return templates.TemplateResponse("boq_edit.html", ctx)
+    return templates.TemplateResponse(request, "boq_edit.html", ctx)
 
 
 @app.post("/boq/{item_id}/update")
@@ -2891,7 +2889,7 @@ def defects_page(
         "users_by_id": users_by_id,
         "prefill": prefill,
     })
-    return templates.TemplateResponse("defects.html", ctx)
+    return templates.TemplateResponse(request, "defects.html", ctx)
 
 
 @app.post("/defects/create")
@@ -3014,7 +3012,7 @@ def defect_edit_page(
         "wbs_filter": wbs_filter or "", "severity_filter": severity_filter or "",
         "status_filter": status_filter or "", "assigned_filter": assigned_filter or "",
     })
-    return templates.TemplateResponse("defect_edit.html", ctx)
+    return templates.TemplateResponse(request, "defect_edit.html", ctx)
 
 
 @app.post("/defects/{defect_id}/update")
@@ -3173,7 +3171,7 @@ def defect_serve_attachment(
 @app.get("/report-defect", response_class=HTMLResponse)
 def report_defect_public(request: Request, session: Session = Depends(get_session)):
     projects = session.exec(select(Project).order_by(Project.name.asc())).all()
-    return templates.TemplateResponse("report_defect.html", {"request": request, "projects": projects})
+    return templates.TemplateResponse(request, "report_defect.html", {"projects": projects})
 
 
 @app.post("/report-defect")
@@ -3263,7 +3261,7 @@ def approvals_page(
         "projects": projects,
         "wbs_by_id": wbs_by_id,
     })
-    return templates.TemplateResponse("approvals.html", ctx)
+    return templates.TemplateResponse(request, "approvals.html", ctx)
 
 
 @app.post("/approvals/wbs/{item_id}")
@@ -3393,7 +3391,7 @@ def users_page(
         "roles": [r for r in Role],
         "resources": [r for r in PermissionResource],
     })
-    return templates.TemplateResponse("users.html", ctx)
+    return templates.TemplateResponse(request, "users.html", ctx)
 
 
 @app.post("/users/create")
@@ -3465,7 +3463,7 @@ def user_edit_page(
         "user_locations": user_locations,
         "roles": [r for r in Role],
     })
-    return templates.TemplateResponse("user_edit.html", ctx)
+    return templates.TemplateResponse(request, "user_edit.html", ctx)
 
 
 @app.post("/users/{user_id}/edit")
