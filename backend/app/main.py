@@ -94,6 +94,19 @@ templates.env.cache = None
 app.mount("/static", StaticFiles(directory=os.path.join(_BASE_DIR, "static")), name="static")
 
 
+def _integration_key_ok(request: Request) -> bool:
+    """
+    Allow headless/cron calls to integration endpoints.
+    Set INTEGRATIONS_KEY in Railway and send header:
+      X-Integrations-Key: <value>
+    """
+    key = (os.environ.get("INTEGRATIONS_KEY") or "").strip()
+    if not key:
+        return False
+    got = (request.headers.get("x-integrations-key") or "").strip()
+    return bool(got) and got == key
+
+
 @app.middleware("http")
 async def https_redirect_and_hsts(request: Request, call_next):
     """
@@ -341,13 +354,15 @@ def integrations(
 @app.post("/integrations/kobo/setup")
 def kobo_setup(
     request: Request,
-    user: User = Depends(require_roles(Role.architect, Role.project_owner)),
+    user: Optional[User] = Depends(get_current_user_optional),
     session: Session = Depends(get_session),
 ):
     """
     Create and deploy the Kobo form via API and store the asset UID in Ecotrack DB.
     Requires KOBO_API_TOKEN env var.
     """
+    if not (_integration_key_ok(request) or (user and user.role in (Role.architect, Role.project_owner))):
+        raise HTTPException(403, "Forbidden")
     try:
         cfg = KoboConfig.from_env()
         import_uid = kobo_import_xlsform(cfg=cfg)
@@ -372,13 +387,15 @@ def kobo_setup(
 def kobo_config(
     request: Request,
     asset_uid: str = Form(...),
-    user: User = Depends(require_roles(Role.architect, Role.project_owner)),
+    user: Optional[User] = Depends(get_current_user_optional),
     session: Session = Depends(get_session),
 ):
     """
     Save an existing Kobo asset UID (form id) into Ecotrack DB settings.
     Use this if you created the form already (manually or via another environment).
     """
+    if not (_integration_key_ok(request) or (user and user.role in (Role.architect, Role.project_owner))):
+        raise HTTPException(403, "Forbidden")
     asset_uid = (asset_uid or "").strip()
     if not asset_uid:
         raise HTTPException(400, "asset_uid is required")
@@ -393,7 +410,7 @@ def kobo_config(
 @app.post("/integrations/kobo/sync")
 def kobo_sync(
     request: Request,
-    user: User = Depends(require_roles(Role.architect, Role.project_owner)),
+    user: Optional[User] = Depends(get_current_user_optional),
     session: Session = Depends(get_session),
 ):
     """
@@ -402,6 +419,8 @@ def kobo_sync(
     - store GPS on WbsItem
     - download and store photo/audio into WbsPhoto/WbsAudio (phase before/after)
     """
+    if not (_integration_key_ok(request) or (user and user.role in (Role.architect, Role.project_owner))):
+        raise HTTPException(403, "Forbidden")
     asset_uid = _kobo_asset_uid(session)
     if not asset_uid:
         if "text/html" in (request.headers.get("accept") or ""):
