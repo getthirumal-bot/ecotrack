@@ -127,9 +127,10 @@ def unhandled_exception_handler(request: Request, exc: Exception):
     """Capture any unhandled exception (e.g. in dependencies) and log it. If SHOW_ERRORS=1, return details in HTML."""
     logging.exception("Unhandled exception: %s", exc)
     show = os.environ.get("SHOW_ERRORS", "").lower() in ("1", "true", "yes")
+    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     if show:
         return HTMLResponse(
-            content=f"<html><body><h1>Error</h1><pre>{type(exc).__name__}: {exc}</pre><pre>{traceback.format_exc()}</pre></body></html>",
+            content=f"<html><body><h1>Error</h1><pre>{type(exc).__name__}: {exc}</pre><pre>{tb}</pre></body></html>",
             status_code=500,
         )
     return HTMLResponse(
