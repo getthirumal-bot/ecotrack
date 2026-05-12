@@ -111,6 +111,21 @@
     {% if request.query_params.get("sent_activity") %}
       <p class="muted" style="color: rgba(57,217,138,.9); margin-bottom:8px;">✅ Reminders sent to {{ request.query_params.get("count", "0") }} assignee(s).</p>
     {% endif %}
+    {% if request.query_params.get("sent_kobo") %}
+      <div style="margin-bottom:12px; padding:12px 14px; border-radius:8px; background: rgba(57,217,138,.12); border: 1px solid rgba(57,217,138,.35); color: rgba(230,245,255,.95);">
+        <strong style="color: rgba(57,217,138,1);">✅ Kobo push complete</strong>
+        <p style="margin:8px 0 0 0; line-height:1.5;">
+          Project <strong>{{ p.name }}</strong>
+          <span class="muted" style="font-size:.85rem;">(id <code style="background:rgba(0,0,0,.25);padding:2px 6px;border-radius:4px;">{{ p.id }}</code>)</span>:
+          updated <strong>{{ request.query_params.get("count", "0") }}</strong> field staff Kobo form(s)
+          for <strong>{{ request.query_params.get("activities", "?") }}</strong> selected activit{{ "y" if request.query_params.get("activities") == "1" else "ies" }}.
+          {% if request.query_params.get("date") %}
+            <span class="muted">Control-center date: {{ request.query_params.get("date") }}.</span>
+          {% endif %}
+        </p>
+        <p class="muted" style="margin:8px 0 0 0; font-size:.9rem;">Assignees with email were sent a link to their personal Kobo form. They can open Kobo (or the link in email) to submit GPS, photos, and status.</p>
+      </div>
+    {% endif %}
 
     <!-- Quick Filters -->
     <div style="margin-bottom:16px; padding:12px; background: rgba(19,35,58,.4); border-radius:8px;">

@@ -1958,8 +1958,27 @@ async def project_push_activities_to_kobo(
         notify_kobo_activity_links(users=users, project_name=p.name, activity_date=activity_date, links_by_user_email=links_by_email)
 
     sent_count = updated_forms
+    activities_n = len(items)
+    users_with_tasks_and_email = sum(1 for u in users if u.email and (tasks_by_email.get(u.email) or []))
+    if sent_count == 0:
+        if users_with_tasks_and_email == 0:
+            return RedirectResponse(
+                f"/projects/{project_id}?msg="
+                + quote(
+                    "No Kobo forms updated: assignees for the selected activities need an email address in Ecotrack."
+                ),
+                status_code=303,
+            )
+        return RedirectResponse(
+            f"/projects/{project_id}?error="
+            + quote(
+                "Kobo did not update any forms (API/import may have failed). Check Railway logs, KOBO_API_TOKEN, and /integrations."
+            ),
+            status_code=303,
+        )
+
     return RedirectResponse(
-        f"/projects/{project_id}?sent_kobo=1&count={sent_count}&date={activity_date}",
+        f"/projects/{project_id}?sent_kobo=1&count={sent_count}&activities={activities_n}&date={quote(activity_date)}",
         status_code=303,
     )
 
