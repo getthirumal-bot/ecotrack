@@ -1782,10 +1782,9 @@ def get_completion_tracking(
 
 
 @app.post("/projects/{project_id}/send-activity-reminders")
-def project_send_activity_reminders(
+async def project_send_activity_reminders(
     request: Request,
     project_id: str,
-    activity_date: str = Form(...),
     user: User = Depends(require_roles(Role.architect, Role.project_owner)),
     session: Session = Depends(get_session),
 ):
@@ -1793,8 +1792,8 @@ def project_send_activity_reminders(
     p = session.exec(select(Project).where(Project.id == project_id)).first()
     if not p:
         raise HTTPException(404, "Project not found")
-    activity_date = (activity_date or "").strip()[:10]
-    form_data = request.form()
+    form_data = await request.form()
+    activity_date = (str(form_data.get("activity_date") or "")).strip()[:10]
     selected_wbs_ids = set(form_data.getlist("selected_wbs_ids"))
     if not selected_wbs_ids:
         return RedirectResponse(f"/projects/{project_id}?error=" + quote("Please select at least one activity"), status_code=303)
@@ -1827,10 +1826,9 @@ def project_send_activity_reminders(
 
 
 @app.post("/projects/{project_id}/push-activities-to-kobo")
-def project_push_activities_to_kobo(
+async def project_push_activities_to_kobo(
     request: Request,
     project_id: str,
-    activity_date: str = Form(...),
     user: User = Depends(require_roles(Role.architect, Role.project_owner)),
     session: Session = Depends(get_session),
 ):
@@ -1855,8 +1853,8 @@ def project_push_activities_to_kobo(
     except KoboError as e:
         return RedirectResponse(f"/projects/{project_id}?error=" + quote(str(e)), status_code=303)
 
-    activity_date = (activity_date or "").strip()[:10]
-    form_data = request.form()
+    form_data = await request.form()
+    activity_date = (str(form_data.get("activity_date") or "")).strip()[:10]
     selected_wbs_ids = set(form_data.getlist("selected_wbs_ids"))
     if not selected_wbs_ids:
         return RedirectResponse(f"/projects/{project_id}?error=" + quote("Please select at least one activity"), status_code=303)
@@ -1945,17 +1943,19 @@ def project_push_activities_to_kobo(
 
 
 @app.post("/defects/send-reminders")
-def defects_send_reminders(
+async def defects_send_reminders(
     request: Request,
-    project_id: str = Form(...),
     user: User = Depends(require_roles(Role.architect, Role.project_owner)),
     session: Session = Depends(get_session),
 ):
     """PM: send email and WhatsApp to assignees of selected defects."""
+    form_data = await request.form()
+    project_id = str(form_data.get("project_id") or "").strip()
+    if not project_id:
+        return RedirectResponse("/defects?error=" + quote("Project required"), status_code=303)
     p = session.exec(select(Project).where(Project.id == project_id)).first()
     if not p:
         raise HTTPException(404, "Project not found")
-    form_data = request.form()
     selected_defect_ids = set(form_data.getlist("selected_defect_ids"))
     if not selected_defect_ids:
         return RedirectResponse(f"/defects?project_id={project_id}&error=" + quote("Please select at least one defect"), status_code=303)
@@ -3611,21 +3611,23 @@ def users_page(
 
 
 @app.post("/users/create")
-def users_create(
+async def users_create(
     request: Request,
-    name: str = Form(...),
-    email: str = Form(...),
-    password: str = Form(""),
-    role: str = Form(...),
-    phone: str = Form(""),
-    whatsapp_phone: str = Form(""),
-    address: str = Form(""),
-    locations: str = Form(""),
     user: User = Depends(require_roles(Role.architect, Role.project_owner)),
     session: Session = Depends(get_session),
 ):
-    form_data = request.form()
+    form_data = await request.form()
     project_ids = list(form_data.getlist("project_ids")) if form_data else []
+    name = str(form_data.get("name") or "").strip()
+    email = str(form_data.get("email") or "").strip()
+    password = str(form_data.get("password") or "")
+    role = str(form_data.get("role") or "")
+    phone = str(form_data.get("phone") or "")
+    whatsapp_phone = str(form_data.get("whatsapp_phone") or "")
+    address = str(form_data.get("address") or "")
+    locations = str(form_data.get("locations") or "")
+    if not name:
+        return RedirectResponse("/users?error=" + quote("Name required"), status_code=303)
     email_clean = email.strip().lower()
     if not email_clean:
         return RedirectResponse("/users?error=" + quote("Email required"), status_code=303)
@@ -3683,25 +3685,27 @@ def user_edit_page(
 
 
 @app.post("/users/{user_id}/edit")
-def user_edit(
+async def user_edit(
     request: Request,
     user_id: str,
-    name: str = Form(...),
-    email: str = Form(...),
-    role: str = Form(...),
-    phone: str = Form(""),
-    whatsapp_phone: str = Form(""),
-    address: str = Form(""),
-    locations: str = Form(""),
-    change_password: str = Form(""),
     user: User = Depends(require_roles(Role.architect, Role.project_owner)),
     session: Session = Depends(get_session),
 ):
-    form_data = request.form()
+    form_data = await request.form()
     project_ids = list(form_data.getlist("project_ids")) if form_data else []
+    name = str(form_data.get("name") or "").strip()
+    email = str(form_data.get("email") or "").strip()
+    role = str(form_data.get("role") or "")
+    phone = str(form_data.get("phone") or "")
+    whatsapp_phone = str(form_data.get("whatsapp_phone") or "")
+    address = str(form_data.get("address") or "")
+    locations = str(form_data.get("locations") or "")
+    change_password = str(form_data.get("change_password") or "")
     edit_user = session.exec(select(User).where(User.id == user_id)).first()
     if not edit_user:
         raise HTTPException(404, "User not found")
+    if not name:
+        return RedirectResponse(f"/users/{user_id}/edit?error=" + quote("Name required"), status_code=303)
     email_clean = email.strip().lower()
     if not email_clean:
         return RedirectResponse(f"/users/{user_id}/edit?error=" + quote("Email required"), status_code=303)
