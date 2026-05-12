@@ -568,7 +568,21 @@ def kobo_setup(
         raise HTTPException(403, "Forbidden")
     try:
         cfg = KoboConfig.from_env()
-        import_uid = kobo_import_xlsform(cfg=cfg)
+        import_uid = kobo_import_xlsform(
+            cfg=cfg,
+            form_title="Ecotrack Field Updates (bootstrap)",
+            form_id="ecotrack_field_updates_bootstrap",
+            task_choices=[
+                (
+                    "bootstrap_placeholder",
+                    "[No tasks yet] Use Ecotrack Project Control Center → Push to Kobo to load activities.",
+                )
+            ],
+            project_id="",
+            project_name="",
+            field_supervisor_default="",
+            designation_default="",
+        )
         import_payload = kobo_wait_import(cfg=cfg, import_uid=import_uid)
         asset_uid = kobo_extract_created_asset_uid(import_payload)
         kobo_deploy_form(cfg=cfg, asset_uid=asset_uid)
@@ -1894,7 +1908,10 @@ async def project_push_activities_to_kobo(
         timeline = ""
         if item.start_date or item.end_date:
             timeline = f" ({item.start_date or ''} → {item.end_date or ''})"
-        label = f"{p.name} · {label_by_id.get(item.id, item.name)}{timeline}"
+        # Kobo form already shows project name; keep task lines short (path + type, no repeated project prefix)
+        path_label = label_by_id.get(item.id, item.name)
+        path_label = path_label.replace(" → ", " > ")
+        label = f"{path_label}{timeline}"
         for uid in [item.primary_owner_id, item.secondary_owner_id]:
             if not uid or uid not in users_by_id:
                 continue
@@ -1916,11 +1933,16 @@ async def project_push_activities_to_kobo(
         settings_key = f"kobo.asset_uid.user.{u.id}"
         existing = _get_setting(session, settings_key)
         try:
+            designation_default = u.role.value.replace("_", " ").title()
             asset_uid = kobo_create_or_update_user_form(
                 cfg=cfg,
                 existing_asset_uid=existing,
                 user_email=u.email,
                 task_choices=user_tasks,
+                project_id=p.id,
+                project_name=p.name,
+                field_supervisor_default=(u.name or "").strip(),
+                designation_default=designation_default,
             )
         except Exception as e:
             logging.exception("Kobo push failed for %s: %s", u.email, e)

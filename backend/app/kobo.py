@@ -54,18 +54,42 @@ def _auth_headers(token: str) -> Dict[str, str]:
     }
 
 
+def _odk_single_quoted(s: str) -> str:
+    """Safe string literal for XLSForm calculate column (single-quoted XPath string)."""
+    return "'" + (s or "").replace("'", "''") + "'"
+
+
+def _survey_row(
+    type_: str,
+    name: str = "",
+    label: str = "",
+    hint: str = "",
+    required: str = "",
+    relevant: str = "",
+    appearance: str = "",
+    default: str = "",
+    calculation: str = "",
+) -> List[str]:
+    return [type_, name, label, hint, required, relevant, appearance, default, calculation]
+
+
 def _xlsx_bytes_for_ecotrack_field_updates_form(
     *,
     form_title: str,
     form_id: str,
     task_choices: List[Tuple[str, str]],
+    project_id: str = "",
+    project_name: str = "",
+    field_supervisor_default: str = "",
+    designation_default: str = "",
 ) -> bytes:
     """
     Build a simple XLSForm (as .xlsx) for Kobo:
-    - hidden Ecotrack ids (project_id, wbs_id)
-    - status update
-    - phase (before/after)
-    - gps + photo + audio + video + notes
+    - Ecotrack project id stored via calculate (not shown; Enketo ignores text+hidden reliably)
+    - Task picker with minimal appearance (dropdown, not a long radio list)
+    - begin_group with relevant: follow-up fields only after a task is chosen
+    - field supervisor + designation (defaults from Ecotrack assignee; editable on device)
+    - status update, phase, GPS, media, remarks
     """
     wb = Workbook()
 
@@ -74,26 +98,119 @@ def _xlsx_bytes_for_ecotrack_field_updates_form(
     ws_choices = wb.create_sheet("choices")
     ws_settings = wb.create_sheet("settings")
 
-    ws_survey.append(["type", "name", "label", "required", "appearance"])
+    hdr = ["type", "name", "label", "hint", "required", "relevant", "appearance", "default", "calculation"]
+    ws_survey.append(hdr)
 
-    # Project id stays hidden (prefilled when needed), while task is selected from pushed list
-    ws_survey.append(["text", "ecotrack_project_id", "Ecotrack Project ID", "no", "hidden"])
-    ws_survey.append(["select_one ecotrack_tasks", "ecotrack_wbs_id", "Select activity", "yes", ""])
+    if (project_name or "").strip():
+        ws_survey.append(
+            _survey_row(
+                "note",
+                "intro_project",
+                f"Project: {(project_name or '').strip()}",
+                "Activities below are for this project only. Ecotrack records the project automatically.",
+                "no",
+                "",
+                "",
+                "",
+                "",
+            )
+        )
 
-    # Who / when - Kobo already stores metadata, but keep a visible field for convenience
-    ws_survey.append(["text", "submitted_by", "Your name / email (optional)", "no", ""])
+    # Stored for sync; never shown in UI (calculate, not text+appearance:hidden)
+    ws_survey.append(
+        _survey_row(
+            "calculate",
+            "ecotrack_project_id",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            _odk_single_quoted(project_id or ""),
+        )
+    )
 
-    # Phase and status
-    ws_survey.append(["select_one before_after", "phase", "Phase", "yes", ""])
-    ws_survey.append(["select_one wbs_status", "wbs_status", "Task status", "yes", ""])
+    ws_survey.append(
+        _survey_row(
+            "select_one ecotrack_tasks",
+            "ecotrack_wbs_id",
+            "Select activity",
+            "Choose one task, then the rest of the form opens.",
+            "yes",
+            "",
+            "minimal",
+            "",
+            "",
+        )
+    )
 
-    # Evidence
-    ws_survey.append(["geopoint", "gps", "GPS location", "no", ""])
-    ws_survey.append(["image", "photo", "Photo (optional)", "no", ""])
-    ws_survey.append(["audio", "audio", "Audio note (optional)", "no", ""])
-    ws_survey.append(["video", "video", "Video (optional)", "no", ""])
-    ws_survey.append(["note", "instructions", "If you are offline, you can submit and it will sync when internet is back.", "no", ""])
-    ws_survey.append(["text", "remarks", "Remarks (optional)", "no", ""])
+    rel_after_task = "string-length(${ecotrack_wbs_id}) > 0"
+    ws_survey.append(
+        _survey_row(
+            "begin_group",
+            "grp_after_task",
+            "Task update",
+            "",
+            "no",
+            rel_after_task,
+            "",
+            "",
+            "",
+        )
+    )
+
+    ws_survey.append(
+        _survey_row(
+            "text",
+            "field_supervisor",
+            "Field supervisor (on site today)",
+            "Who is supervising this update? Change if someone else is on site.",
+            "no",
+            "",
+            "",
+            (field_supervisor_default or "").strip(),
+            "",
+        )
+    )
+    ws_survey.append(
+        _survey_row(
+            "text",
+            "field_designation",
+            "Designation / role on site",
+            "e.g. Field Manager, Supervisor. Edit if needed.",
+            "no",
+            "",
+            "",
+            (designation_default or "").strip(),
+            "",
+        )
+    )
+
+    ws_survey.append(
+        _survey_row("text", "submitted_by", "Your name / email (optional)", "If different from your Kobo login.", "no", "", "", "", "")
+    )
+    ws_survey.append(_survey_row("select_one before_after", "phase", "Phase", "", "yes", "", "", "", ""))
+    ws_survey.append(_survey_row("select_one wbs_status", "wbs_status", "Task status", "", "yes", "", "", "", ""))
+    ws_survey.append(_survey_row("geopoint", "gps", "GPS location", "", "no", "", "", "", ""))
+    ws_survey.append(_survey_row("image", "photo", "Photo (optional)", "", "no", "", "", "", ""))
+    ws_survey.append(_survey_row("audio", "audio", "Audio note (optional)", "", "no", "", "", "", ""))
+    ws_survey.append(_survey_row("video", "video", "Video (optional)", "", "no", "", "", "", ""))
+    ws_survey.append(
+        _survey_row(
+            "note",
+            "instructions",
+            "If you are offline, you can save and submit when internet is back.",
+            "",
+            "no",
+            "",
+            "",
+            "",
+            "",
+        )
+    )
+    ws_survey.append(_survey_row("text", "remarks", "Remarks (optional)", "", "no", "", "", "", ""))
+    ws_survey.append(_survey_row("end_group", "grp_after_task", "", "", "", "", "", "", ""))
 
     ws_choices.append(["list_name", "name", "label"])
     for wbs_id, label in task_choices:
@@ -113,12 +230,31 @@ def _xlsx_bytes_for_ecotrack_field_updates_form(
     return bio.getvalue()
 
 
-def kobo_import_xlsform(*, cfg: KoboConfig, form_title: str, form_id: str, task_choices: List[Tuple[str, str]], asset_uid: Optional[str] = None) -> str:
+def kobo_import_xlsform(
+    *,
+    cfg: KoboConfig,
+    form_title: str,
+    form_id: str,
+    task_choices: List[Tuple[str, str]],
+    asset_uid: Optional[str] = None,
+    project_id: str = "",
+    project_name: str = "",
+    field_supervisor_default: str = "",
+    designation_default: str = "",
+) -> str:
     """
     Upload an XLSForm to Kobo and return the import uid.
     Uses the /api/v2/imports/ endpoint (multipart).
     """
-    xlsx = _xlsx_bytes_for_ecotrack_field_updates_form(form_title=form_title, form_id=form_id, task_choices=task_choices)
+    xlsx = _xlsx_bytes_for_ecotrack_field_updates_form(
+        form_title=form_title,
+        form_id=form_id,
+        task_choices=task_choices,
+        project_id=project_id,
+        project_name=project_name,
+        field_supervisor_default=field_supervisor_default,
+        designation_default=designation_default,
+    )
     files = {
         "file": ("ecotrack_field_updates_v1.xlsx", xlsx, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     }
@@ -144,6 +280,10 @@ def kobo_create_or_update_user_form(
     existing_asset_uid: Optional[str],
     user_email: str,
     task_choices: List[Tuple[str, str]],
+    project_id: str,
+    project_name: str,
+    field_supervisor_default: str = "",
+    designation_default: str = "",
 ) -> str:
     """
     Create (or update) a per-user Kobo form that contains only that user's tasks.
@@ -158,6 +298,10 @@ def kobo_create_or_update_user_form(
         form_id=form_id,
         task_choices=task_choices,
         asset_uid=existing_asset_uid,
+        project_id=project_id,
+        project_name=project_name,
+        field_supervisor_default=field_supervisor_default,
+        designation_default=designation_default,
     )
     payload = kobo_wait_import(cfg=cfg, import_uid=import_uid, timeout_s=180)
     # If server updated existing asset, it may show under "updated", otherwise "created"
